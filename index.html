@@ -1,1 +1,599 @@
-<h1>빠꼬미 Mobile-First 시작</h1>
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b56b8">
+<title>빠꼬미</title>
+
+<!-- ==================================================================
+     빠꼬미 Mobile-First V0.1 — STEP 1
+     기본 화면 + IndexedDB 초기화 + 자재 등록
+
+     ★ 왜 파일이 하나인가
+       정훈님이 폰에서 GitHub 에 올려야 하기 때문이다.
+       파일이 셋이면 올리는 일도 셋, 실수할 곳도 셋이 된다.
+       안쪽은 아래처럼 세 겹으로 확실히 나눠 두었다.
+
+         ① 모양   (CSS)
+         ② 저장   (STORE) ← IndexedDB 를 아는 코드는 여기뿐이다
+         ③ 화면   (UI)
+
+     ★ 자재 정보는 이 폰을 떠나지 않는다.
+       바깥으로 보내는 코드가 이 파일에 한 줄도 없다.
+     ================================================================== -->
+
+<style>
+:root{
+  --bg:#f4f5f7; --card:#ffffff; --line:#d5d9e0;
+  --ink:#15181d; --dim:#5f6672;
+  --blue:#1b56b8; --blue-d:#14418c;
+  --ok:#12694a; --warn:#8a5b00; --bad:#b3261e;
+  --tap:54px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font:17px/1.5 -apple-system,"Noto Sans KR","Malgun Gothic",sans-serif;
+  padding-bottom:40px;
+  -webkit-text-size-adjust:100%;
+}
+[hidden]{display:none !important}
+
+/* ---------- 머리 ---------- */
+header{
+  position:sticky; top:0; z-index:20;
+  background:var(--blue); color:#fff;
+  padding:14px 16px calc(12px + env(safe-area-inset-top,0)) 16px;
+  padding-top:calc(14px + env(safe-area-inset-top,0));
+}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand h1{margin:0;font-size:24px;font-weight:800;letter-spacing:-.5px}
+.brand .ver{font-size:12px;opacity:.8}
+#status{margin-top:6px;font-size:13.5px;opacity:.95}
+
+/* ---------- 본문 ---------- */
+main{padding:14px 14px 0 14px;max-width:640px;margin:0 auto}
+
+.searchbox{position:relative;margin-bottom:12px}
+.searchbox input{
+  width:100%;height:var(--tap);padding:0 44px 0 14px;
+  font-size:17px;border:2px solid var(--line);border-radius:12px;
+  background:#fff;color:var(--ink);
+}
+.searchbox input:focus{outline:none;border-color:var(--blue)}
+.searchbox .clr{
+  position:absolute;right:6px;top:6px;width:42px;height:42px;
+  border:0;background:transparent;font-size:20px;color:var(--dim);
+}
+
+button{font-family:inherit}
+.big{
+  display:block;width:100%;height:var(--tap);
+  border:0;border-radius:12px;background:var(--blue);color:#fff;
+  font-size:18px;font-weight:700;
+}
+.big:active{background:var(--blue-d)}
+.big.ghost{background:#fff;color:var(--blue);border:2px solid var(--blue)}
+.big.flat{background:#e9ecf1;color:var(--ink)}
+
+.rowlabel{
+  display:flex;justify-content:space-between;align-items:baseline;
+  margin:20px 2px 8px 2px;font-size:14px;color:var(--dim);font-weight:700;
+}
+
+/* ---------- 자재 카드 ---------- */
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:13px 14px;margin-bottom:10px;
+}
+.card .nm{font-size:18px;font-weight:800;line-height:1.35}
+.card .pn{
+  display:inline-block;margin-top:6px;padding:2px 8px;
+  background:#eef2fb;color:var(--blue-d);border-radius:6px;
+  font-size:14px;font-weight:700;letter-spacing:.3px;
+}
+.card dl{margin:8px 0 0 0;font-size:15px}
+.card dl div{display:flex;gap:8px;margin-top:3px}
+.card dt{flex:0 0 62px;color:var(--dim)}
+.card dd{margin:0;flex:1;word-break:break-all}
+.empty{
+  text-align:center;color:var(--dim);padding:34px 10px;font-size:15.5px;
+  background:#fff;border:1px dashed var(--line);border-radius:12px;
+}
+
+/* ---------- 등록 화면 ---------- */
+#form{
+  position:fixed;inset:0;z-index:50;background:var(--bg);
+  overflow-y:auto;-webkit-overflow-scrolling:touch;
+}
+#form .top{
+  position:sticky;top:0;background:var(--blue);color:#fff;
+  padding:calc(14px + env(safe-area-inset-top,0)) 16px 14px 16px;
+  font-size:19px;font-weight:800;
+}
+#form .body{padding:14px 14px 30px 14px;max-width:640px;margin:0 auto}
+label{display:block;margin:14px 0 6px 2px;font-size:14.5px;font-weight:700;color:var(--dim)}
+label .req{color:var(--bad)}
+input[type=text],textarea{
+  width:100%;padding:0 13px;font-size:17px;font-family:inherit;
+  border:2px solid var(--line);border-radius:11px;background:#fff;color:var(--ink);
+}
+input[type=text]{height:var(--tap)}
+textarea{padding:12px 13px;min-height:84px;line-height:1.5;resize:vertical}
+input:focus,textarea:focus{outline:none;border-color:var(--blue)}
+.hint{margin:6px 2px 0 2px;font-size:13px;color:var(--dim)}
+.btns{display:flex;gap:10px;margin-top:24px}
+.btns .big{flex:1}
+
+/* ---------- 알림 ---------- */
+#toast{
+  position:fixed;left:14px;right:14px;bottom:22px;z-index:90;
+  background:#1d2027;color:#fff;padding:14px 16px;border-radius:12px;
+  font-size:16px;font-weight:600;box-shadow:0 6px 22px rgba(0,0,0,.25);
+}
+.banner{
+  border-radius:12px;padding:12px 14px;margin-bottom:12px;
+  font-size:15px;line-height:1.5;
+}
+.banner.bad{background:#fdecea;border:1px solid #f3c4c0;color:var(--bad)}
+.banner.warn{background:#fff6e5;border:1px solid #f0dcae;color:var(--warn)}
+
+/* ---------- 진단 ---------- */
+#diagWrap{margin:26px 0 10px 0}
+#diag{
+  margin-top:10px;background:#fff;border:1px solid var(--line);
+  border-radius:12px;padding:12px 14px;font-size:14px;color:var(--dim);
+}
+#diag b{color:var(--ink)}
+#diag div{margin:4px 0;word-break:break-all}
+footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><h1>빠꼬미</h1><span class="ver" id="ver"></span></div>
+  <div id="status">저장소를 여는 중…</div>
+</header>
+
+<main>
+  <div id="alerts"></div>
+
+  <div class="searchbox">
+    <input id="q" type="text" inputmode="search" enterkeyhint="search"
+           placeholder="품명 · 품번 · 규격 · 별명 · 브랜드"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <button class="clr" id="qclr" hidden aria-label="지우기">✕</button>
+  </div>
+
+  <button class="big" id="btnNew">＋ 자재 등록</button>
+
+  <div class="rowlabel"><span id="listTitle">최근 등록한 자재</span><span id="listCount"></span></div>
+  <div id="list"></div>
+
+  <div id="diagWrap">
+    <button class="big flat" id="btnDiag">저장소 상태 확인</button>
+    <div id="diag" hidden></div>
+  </div>
+
+  <footer id="foot"></footer>
+</main>
+
+<!-- ========================= 등록 화면 ========================= -->
+<div id="form" hidden>
+  <div class="top">자재 등록</div>
+  <div class="body">
+    <label for="f_name">명칭 <span class="req">*</span></label>
+    <input id="f_name" type="text" placeholder="예) 근접센서" enterkeyhint="next">
+    <div class="hint">현장에서 부르는 이름 그대로 적으셔도 됩니다.</div>
+
+    <label for="f_partNo">품번</label>
+    <input id="f_partNo" type="text" placeholder="예) E2E-X5ME1" autocapitalize="characters" enterkeyhint="next">
+    <div class="hint">품번은 물건의 신분입니다. 아는 경우 꼭 적어 주십시오.</div>
+
+    <label for="f_spec">규격</label>
+    <input id="f_spec" type="text" placeholder="예) M18 NPN NO 5mm" enterkeyhint="next">
+
+    <label for="f_brand">브랜드 / 제조사</label>
+    <input id="f_brand" type="text" placeholder="예) 오므론" enterkeyhint="next">
+
+    <label for="f_alias">별명 (현장에서 부르는 다른 이름)</label>
+    <input id="f_alias" type="text" placeholder="예) 프록스, 근접, PROX" enterkeyhint="next">
+    <div class="hint">쉼표(,)로 여러 개를 적을 수 있습니다.</div>
+
+    <label for="f_place">보관장소</label>
+    <input id="f_place" type="text" placeholder="예) 중앙창고 B-3" enterkeyhint="next">
+
+    <label for="f_use">사용용도</label>
+    <input id="f_use" type="text" placeholder="예) 압연 1호기 소재 감지" enterkeyhint="next">
+
+    <label for="f_prefer">선호자</label>
+    <input id="f_prefer" type="text" placeholder="예) 변정훈" enterkeyhint="next">
+
+    <label for="f_note">비고</label>
+    <textarea id="f_note" placeholder="현장에서 알아둘 점"></textarea>
+
+    <div class="btns">
+      <button class="big ghost" id="btnCancel">취소</button>
+      <button class="big" id="btnSave">저장</button>
+    </div>
+    <div class="hint" style="margin-top:14px">
+      저장하면 이 폰 안에만 기록됩니다. 인터넷으로 나가지 않습니다.
+    </div>
+  </div>
+</div>
+
+<div id="toast" hidden></div>
+
+<script>
+"use strict";
+/* ==================================================================
+   빠꼬미 Mobile-First V0.1
+   ================================================================== */
+var APP_VERSION = "V0.1 · STEP 1";
+var BUILD       = "2026-09-08a";
+var SCHEMA      = 1;
+
+/* ==================================================================
+   ① STORE — IndexedDB 를 아는 코드는 여기뿐이다
+     Legacy 원칙 ④「SQL 은 repository.py 안에만 있다」를 그대로 옮긴 것.
+     나중에 저장 방식이 바뀌어도 이 블록만 갈아끼우면 된다.
+   ================================================================== */
+var STORE = (function () {
+
+  var DB_NAME = "ppakkomi";
+  var db = null;
+
+  /* 열기 — 처음이면 그릇을 만든다 */
+  function open() {
+    return new Promise(function (resolve, reject) {
+      if (!window.indexedDB) { reject(new Error("이 브라우저는 IndexedDB 를 지원하지 않습니다.")); return; }
+      var req;
+      try { req = indexedDB.open(DB_NAME, SCHEMA); }
+      catch (e) { reject(e); return; }
+
+      req.onupgradeneeded = function (ev) {
+        var d = ev.target.result;
+
+        /* 자재 */
+        if (!d.objectStoreNames.contains("materials")) {
+          var m = d.createObjectStore("materials", { keyPath: "id" });
+          m.createIndex("partNo", "partNo", { unique: false });
+          m.createIndex("updatedAt", "updatedAt", { unique: false });
+        }
+        /* 히스토리 — STEP 7 에서 쓴다. 그릇은 지금 만들어 둔다.
+           (나중에 만들면 스키마를 올려야 하고, 그때가 데이터가 있는 때다) */
+        if (!d.objectStoreNames.contains("history")) {
+          var h = d.createObjectStore("history", { keyPath: "id" });
+          h.createIndex("materialId", "materialId", { unique: false });
+          h.createIndex("date", "date", { unique: false });
+        }
+        /* 설정·스키마버전·마지막백업 */
+        if (!d.objectStoreNames.contains("meta")) {
+          d.createObjectStore("meta", { keyPath: "k" });
+        }
+      };
+
+      req.onsuccess = function () {
+        db = req.result;
+        db.onversionchange = function () { try { db.close(); } catch (e) {} };
+        resolve(db);
+      };
+      req.onerror = function () {
+        reject(req.error || new Error("저장소를 열지 못했습니다."));
+      };
+      req.onblocked = function () {
+        reject(new Error("빠꼬미가 다른 탭에서 열려 있습니다. 그 탭을 닫아 주세요."));
+      };
+    });
+  }
+
+  function tx(store, mode) { return db.transaction(store, mode).objectStore(store); }
+
+  function ask(request) {
+    return new Promise(function (resolve, reject) {
+      request.onsuccess = function () { resolve(request.result); };
+      request.onerror = function () { reject(request.error); };
+    });
+  }
+
+  return {
+    open: open,
+    ready: function () { return !!db; },
+
+    put: function (store, obj) {
+      return new Promise(function (resolve, reject) {
+        var t = db.transaction(store, "readwrite");
+        t.objectStore(store).put(obj);
+        t.oncomplete = function () { resolve(obj); };   /* ★ 트랜잭션이 끝나야 진짜 저장된 것이다 */
+        t.onerror = function () { reject(t.error); };
+        t.onabort = function () { reject(t.error || new Error("저장이 취소되었습니다.")); };
+      });
+    },
+
+    all: function (store) { return ask(tx(store, "readonly").getAll()); },
+    get: function (store, id) { return ask(tx(store, "readonly").get(id)); },
+    count: function (store) { return ask(tx(store, "readonly").count()); },
+
+    byIndex: function (store, index, value) {
+      return ask(tx(store, "readonly").index(index).getAll(value));
+    }
+  };
+})();
+
+/* ==================================================================
+   ② 규칙 — 빠꼬미가 무엇을 옳다고 보는가
+   ================================================================== */
+
+/* 검색용 정규화 — 띄어쓰기·기호·대소문자를 지운다.
+   「E2E-X5ME1」과 「e2e x5me1」이 같은 것으로 보여야 한다. */
+function norm(s) {
+  return String(s == null ? "" : s)
+    .toLowerCase()
+    .replace(/[\s\-_.,/\\()[\]{}#:;'"·`~!?]/g, "");
+}
+
+/* 한 자재의 검색 대상 글자 전부 */
+function haystack(m) {
+  return norm([m.name, m.partNo, m.spec, m.brand, m.alias,
+               m.place, m.use, m.preferBy, m.note].join(" "));
+}
+
+/* 토큰 AND — 「압연 감지」는 둘 다 들어 있는 것만 나온다 */
+function match(m, query) {
+  var toks = String(query).split(/\s+/).map(norm).filter(Boolean);
+  if (!toks.length) return true;
+  var hay = haystack(m);
+  for (var i = 0; i < toks.length; i++) if (hay.indexOf(toks[i]) < 0) return false;
+  return true;
+}
+
+function newId() {
+  try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
+  return "m" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
+function nowISO() { return new Date().toISOString(); }
+
+/* ==================================================================
+   ③ UI
+   ================================================================== */
+var $ = function (id) { return document.getElementById(id); };
+var cache = [];          /* 화면이 보고 있는 자재 목록 (메모리) */
+var storageOK = false;
+
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function toast(msg, ms) {
+  var t = $("toast");
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function () { t.hidden = true; }, ms || 2600);
+}
+
+function banner(kind, html) {
+  var d = document.createElement("div");
+  d.className = "banner " + kind;
+  d.innerHTML = html;
+  $("alerts").appendChild(d);
+}
+
+function setStatus(text) { $("status").textContent = text; }
+
+/* ---------- 목록 그리기 ---------- */
+function render() {
+  var q = $("q").value.trim();
+  $("qclr").hidden = !q;
+
+  var rows = q ? cache.filter(function (m) { return match(m, q); }) : cache.slice(0, 20);
+  $("listTitle").textContent = q ? "검색 결과" : "최근 등록한 자재";
+  $("listCount").textContent = q
+    ? rows.length + "건"
+    : (cache.length ? "전체 " + cache.length + "건" : "");
+
+  var box = $("list");
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">' +
+      (q ? "「" + esc(q) + "」에 해당하는 자재가 없습니다."
+         : "아직 등록한 자재가 없습니다.<br>위 <b>＋ 자재 등록</b>을 눌러 첫 자재를 넣어 보세요.") +
+      "</div>";
+    return;
+  }
+
+  var html = "";
+  for (var i = 0; i < rows.length; i++) {
+    var m = rows[i];
+    html += '<div class="card">';
+    html += '<div class="nm">' + esc(m.name) + "</div>";
+    if (m.partNo) html += '<div><span class="pn">' + esc(m.partNo) + "</span></div>";
+    html += "<dl>";
+    html += line("규격", m.spec);
+    html += line("브랜드", m.brand);
+    html += line("별명", m.alias);
+    html += line("보관", m.place);
+    html += line("용도", m.use);
+    html += line("선호자", m.preferBy);
+    html += line("비고", m.note);
+    html += "</dl></div>";
+  }
+  box.innerHTML = html;
+}
+
+function line(k, v) {
+  if (!v) return "";
+  return "<div><dt>" + k + "</dt><dd>" + esc(v) + "</dd></div>";
+}
+
+/* ---------- 목록 다시 읽기 ---------- */
+function reload() {
+  return STORE.all("materials").then(function (rows) {
+    rows.sort(function (a, b) {
+      return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+    });
+    cache = rows;
+    render();
+    setStatus("🟢 저장소 정상 · 자재 " + rows.length + "건");
+  });
+}
+
+/* ---------- 등록 화면 ---------- */
+var FIELDS = ["name", "partNo", "spec", "brand", "alias", "place", "use", "prefer", "note"];
+
+function openForm() {
+  for (var i = 0; i < FIELDS.length; i++) $("f_" + FIELDS[i]).value = "";
+  $("form").hidden = false;
+  document.body.style.overflow = "hidden";
+  setTimeout(function () { $("f_name").focus(); }, 80);
+}
+
+function closeForm() {
+  $("form").hidden = true;
+  document.body.style.overflow = "";
+}
+
+function save() {
+  var v = function (k) { return $("f_" + k).value.trim(); };
+
+  var name = v("name");
+  if (!name) { toast("명칭은 반드시 필요합니다."); $("f_name").focus(); return; }
+
+  var partNo = v("partNo");
+
+  /* ★ 품번은 물건의 신분이다.
+     같은 품번이 이미 있으면 조용히 두 벌로 만들지 않는다 — 먼저 묻는다.
+     (Legacy 에서 가장 뼈아팠던 교훈이다: 같은 자재가 둘로 갈라지면
+      기억도 둘로 갈라지고, 어느 쪽이 맞는지 아무도 모르게 된다) */
+  var dup = null;
+  if (partNo) {
+    for (var i = 0; i < cache.length; i++) {
+      if (cache[i].partNo && norm(cache[i].partNo) === norm(partNo)) { dup = cache[i]; break; }
+    }
+  }
+  if (dup) {
+    var ok = confirm("같은 품번이 이미 있습니다.\n\n" +
+                     "  " + dup.partNo + "\n  " + dup.name + "\n\n" +
+                     "그래도 새 자재로 등록하시겠습니까?");
+    if (!ok) return;
+  }
+
+  var t = nowISO();
+  var m = {
+    id: newId(),
+    partNo: partNo,
+    name: name,
+    spec: v("spec"),
+    brand: v("brand"),
+    alias: v("alias"),
+    place: v("place"),
+    use: v("use"),
+    preferBy: v("prefer"),
+    note: v("note"),
+    createdAt: t,
+    updatedAt: t,
+    schema: SCHEMA
+  };
+
+  $("btnSave").disabled = true;
+  STORE.put("materials", m).then(function () {
+    closeForm();
+    $("q").value = "";
+    return reload();
+  }).then(function () {
+    toast("저장했습니다 — " + m.name);
+  }).catch(function (e) {
+    alert("저장하지 못했습니다.\n\n" + (e && e.message ? e.message : e));
+  }).then(function () {
+    $("btnSave").disabled = false;
+  });
+}
+
+/* ---------- 저장소 상태 진단 ----------
+   ★ 가능한 척하지 않는다. 폰이 실제로 어떤 상태인지 그대로 보여준다. */
+function diagnose() {
+  var d = $("diag");
+  d.hidden = false;
+  d.innerHTML = "<div>확인하는 중…</div>";
+
+  var out = [];
+  out.push("<div><b>버전</b> · " + APP_VERSION + " (" + BUILD + ")</div>");
+  out.push("<div><b>저장소</b> · " + (storageOK ? "IndexedDB 정상" : "열리지 않음") + "</div>");
+  out.push("<div><b>주소</b> · " + esc(location.origin) + "</div>");
+  out.push("<div><b>보안연결</b> · " + (window.isSecureContext ? "예 (HTTPS)" : "아니오") + "</div>");
+
+  var jobs = [];
+
+  /* 저장소를 지워지지 않게 보호해 달라고 브라우저에 요청한다 */
+  if (navigator.storage && navigator.storage.persisted) {
+    jobs.push(navigator.storage.persisted().then(function (p) {
+      if (p) return "🟢 보호됨 (브라우저가 임의로 지우지 않음)";
+      if (navigator.storage.persist) {
+        return navigator.storage.persist().then(function (g) {
+          return g ? "🟢 보호됨 (방금 승인)" : "🟡 보호 요청 거절됨 — 홈 화면에 설치하면 대개 승인됩니다";
+        });
+      }
+      return "🟡 보호되지 않음";
+    }).catch(function () { return "🟡 확인 불가"; })
+      .then(function (s) { out.push("<div><b>데이터 보호</b> · " + s + "</div>"); }));
+  } else {
+    out.push("<div><b>데이터 보호</b> · 🟡 이 브라우저는 확인을 지원하지 않습니다</div>");
+  }
+
+  if (navigator.storage && navigator.storage.estimate) {
+    jobs.push(navigator.storage.estimate().then(function (e) {
+      var mb = function (n) { return (n / 1048576).toFixed(1) + "MB"; };
+      out.push("<div><b>사용 용량</b> · " + mb(e.usage || 0) + " / 쓸 수 있는 양 " + mb(e.quota || 0) + "</div>");
+    }).catch(function () {}));
+  }
+
+  jobs.push(STORE.count("materials").then(function (n) {
+    out.push("<div><b>자재</b> · " + n + "건</div>");
+  }).catch(function () {}));
+  jobs.push(STORE.count("history").then(function (n) {
+    out.push("<div><b>히스토리</b> · " + n + "건 (STEP 7 에서 사용)</div>");
+  }).catch(function () {}));
+
+  Promise.all(jobs).then(function () {
+    out.push('<div style="margin-top:8px">아직 오프라인 기능은 넣지 않았습니다 (STEP 10·11).</div>');
+    d.innerHTML = out.join("");
+  });
+}
+
+/* ---------- 시작 ---------- */
+function boot() {
+  $("ver").textContent = APP_VERSION;
+  $("foot").textContent = "빠꼬미 " + APP_VERSION + " · " + BUILD + " · 자재 정보는 이 폰 안에만 있습니다";
+
+  $("btnNew").addEventListener("click", openForm);
+  $("btnCancel").addEventListener("click", closeForm);
+  $("btnSave").addEventListener("click", save);
+  $("btnDiag").addEventListener("click", diagnose);
+  $("qclr").addEventListener("click", function () { $("q").value = ""; render(); $("q").focus(); });
+  $("q").addEventListener("input", render);
+  $("q").addEventListener("search", render);
+
+  STORE.open().then(function () {
+    storageOK = true;
+    return reload();
+  }).catch(function (e) {
+    storageOK = false;
+    setStatus("🔴 저장소를 열지 못했습니다");
+    banner("bad",
+      "<b>저장소를 열지 못했습니다.</b><br>" +
+      esc(e && e.message ? e.message : String(e)) +
+      "<br><br>시크릿 모드에서는 저장이 되지 않습니다. 일반 창에서 열어 주십시오.");
+    $("btnNew").disabled = true;
+    render();
+  });
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", boot);
+} else { boot(); }
+</script>
+</body>
+</html>
