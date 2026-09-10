@@ -56,7 +56,8 @@ header{
 /* ---------- 본문 ---------- */
 main{padding:14px 14px 0 14px;max-width:640px;margin:0 auto}
 
-.searchbox{position:relative;margin-bottom:12px}
+.searchbox{position:relative;margin-bottom:6px}
+.qtip{margin:0 2px 12px 2px;font-size:13px;color:var(--dim);line-height:1.45}
 .searchbox input{
   width:100%;height:var(--tap);padding:0 44px 0 14px;
   font-size:17px;border:2px solid var(--line);border-radius:12px;
@@ -230,6 +231,7 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     <button class="clr" id="qclr" hidden aria-label="지우기">✕</button>
   </div>
+  <p class="qtip">여러 단어를 띄어 쓰면 <b>모두 들어 있는</b> 자재만 나옵니다 — 예) 검은색 M18</p>
 
   <button class="big" id="btnNew">＋ 자재 등록</button>
 
@@ -340,8 +342,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 6";
-var BUILD       = "2026-09-10a";
+var APP_VERSION = "V0.1 · STEP 7";
+var BUILD       = "2026-09-10b";
 var SCHEMA      = 1;
 
 /* ==================================================================
@@ -478,13 +480,28 @@ function needsAdopt(m) {
   return (!!m.preferBy && !m.feature) || (!!m.note && !m.story);
 }
 
-/* 한 자재의 검색 대상 글자 전부 */
+/* 한 자재의 검색 대상 글자 전부
+   품명 · 품번 · 규격 · 브랜드 · 별명 · 보관장소 · 사용용도 · 자재특징 · 자재스토리
+   (히스토리는 넣지 않는다 — STEP 7 지시)
+
+   ★ 칸과 칸 사이를 "|" 로 막는다.
+     정규화가 띄어쓰기를 지우기 때문에, 그냥 이어 붙이면
+     「근접센서」와 「E2E-…」가 붙어 "센서e2e" 같은 엉뚱한 말도 걸린다.
+     "|" 는 정규화가 지우지 않으므로 칸의 경계가 남는다. */
 function haystack(m) {
-  return norm([m.name, m.partNo, m.spec, m.brand, m.alias,
-               m.place, m.use, m.feature, m.story].join(" "));
+  var fs = [m.name, m.partNo, m.spec, m.brand, m.alias,
+            m.place, m.use, m.feature, m.story];
+  var out = [];
+  for (var i = 0; i < fs.length; i++) out.push(norm(fs[i]));
+  return out.join("|");
 }
 
-/* 토큰 AND — 「압연 감지」는 둘 다 들어 있는 것만 나온다 */
+/* 여러 단어 AND 검색 (STEP 7)
+     "검은색 M18"  → 둘 다 들어 있는 자재만
+     "OMRON 5mm"  → 브랜드에 OMRON, 규격에 5mm 처럼 서로 다른 칸에 있어도 된다
+     "OMRON 10mm" → 10mm 가 없으므로 제외
+   ★ 띄어쓰기가 여러 개든, 앞뒤에 공백이 있든 상관없다 — split(/\s+/) + filter
+   ★ 검색어가 하나도 없으면(빈칸·공백만) 전부 통과 = 전체 목록 */
 function match(m, query) {
   var toks = String(query).split(/\s+/).map(norm).filter(Boolean);
   if (!toks.length) return true;
