@@ -205,6 +205,40 @@ input:focus,textarea:focus{outline:none;border-color:var(--blue)}
 .banner.warn{background:#fff6e5;border:1px solid #f0dcae;color:var(--warn)}
 
 /* ---------- 진단 ---------- */
+/* ---------- 사진 (STEP 9A) — 아직 저장하지 않는다 ---------- */
+#btnPhoto{
+  display:block;width:100%;height:var(--tap);margin-top:10px;
+  border:2px solid var(--blue);border-radius:12px;background:#fff;color:var(--blue);
+  font-size:17px;font-weight:700;
+}
+#btnPhoto:active{background:#eef2fb}
+
+#photo{
+  position:fixed;inset:0;z-index:60;background:var(--bg);
+  overflow-y:auto;-webkit-overflow-scrolling:touch;
+}
+#photo .top{
+  position:sticky;top:0;background:var(--blue);color:#fff;
+  padding:calc(14px + env(safe-area-inset-top,0)) 16px 14px 16px;
+  font-size:19px;font-weight:800;
+}
+#photo .body{padding:14px 14px 30px 14px;max-width:640px;margin:0 auto}
+#shot{
+  width:100%;max-width:100%;height:auto;display:block;
+  border:1px solid var(--line);border-radius:12px;background:#fff;
+}
+#photoEmpty{
+  text-align:center;color:var(--dim);font-size:15.5px;line-height:1.6;
+  padding:46px 14px;background:#fff;border:1px dashed var(--line);border-radius:12px;
+}
+#shotInfo{
+  margin-top:10px;background:#fff;border:1px solid var(--line);border-radius:10px;
+  padding:10px 13px;font-size:13.5px;color:var(--dim);line-height:1.6;
+}
+#shotInfo b{color:var(--ink)}
+#photo .memo{margin:14px 2px 0 2px;font-size:13px;color:var(--dim);line-height:1.55}
+#photoIn{display:none}
+
 /* ---------- 데이터 관리 (STEP 8) ---------- */
 #dataWrap{margin:30px 0 0 0;padding-top:20px;border-top:2px solid var(--line)}
 #dataWrap h2{margin:0 2px 10px 2px;font-size:17px;font-weight:800}
@@ -254,6 +288,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
   <p class="qtip">여러 단어를 띄어 쓰면 <b>모두 들어 있는</b> 자재만 나옵니다 — 예) 검은색 M18</p>
 
   <button class="big" id="btnNew">＋ 자재 등록</button>
+  <button type="button" id="btnPhoto">📷 사진 보기</button>
+  <input type="file" id="photoIn" accept="image/*">
 
   <div class="rowlabel"><span id="listTitle">최근 등록한 자재</span><span id="listCount"></span></div>
   <div id="list"></div>
@@ -374,6 +410,28 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
   </div>
 </div>
 
+<!-- ========================= 사진 (STEP 9A) ========================= -->
+<div id="photo" hidden>
+  <div class="top">사진</div>
+  <div class="body">
+    <div id="photoEmpty">
+      아래 <b>사진 고르기</b>를 누르면<br>카메라 또는 갤러리를 열 수 있습니다.
+    </div>
+    <img id="shot" alt="선택한 사진" hidden>
+    <div id="shotInfo" hidden></div>
+
+    <div class="btns">
+      <button type="button" class="big ghost" id="btnPhotoClose">취소</button>
+      <button type="button" class="big" id="btnPhotoPick">사진 고르기</button>
+    </div>
+
+    <p class="memo">
+      이 사진은 <b>저장되지 않습니다.</b> 화면을 닫으면 사라집니다.
+      자재에 붙여 보관하는 기능은 다음 단계(9B)에서 만듭니다.
+    </p>
+  </div>
+</div>
+
 <div id="toast" hidden></div>
 
 <script>
@@ -381,8 +439,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 8";
-var BUILD       = "2026-09-11a";
+var APP_VERSION = "V0.1 · STEP 9A";
+var BUILD       = "2026-09-11b";
 var BACKUP_FORMAT = 1;
 var SCHEMA      = 1;
 
@@ -960,6 +1018,131 @@ function del() {
 }
 
 /* ==================================================================
+   사진 (STEP 9A) — 눈앞에 펼쳐 보기만 한다
+   ★ 저장하지 않는다. IndexedDB 를 한 번도 부르지 않는다.
+   ★ 밖으로 보내지 않는다. 이 블록에 fetch·XHR 이 한 줄도 없다.
+   ★ 외부 라이브러리를 쓰지 않는다 (File · Image · Canvas · Blob 뿐).
+   ================================================================== */
+var PHOTO_MAX = 1600;      /* 긴 변 한계 — 명판 글자가 읽히는 선 */
+var PHOTO_Q   = 0.85;      /* JPEG 품질 — 더 낮추면 품번이 뭉갠다 */
+var shotURL = null;        /* 지금 화면에 띄운 임시 주소 (반드시 되돌려준다) */
+
+function kb(n) {
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + "MB";
+  return Math.round(n / 1024) + "KB";
+}
+
+function photoOpen() {
+  $("photo").hidden = false;
+  $("photo").scrollTop = 0;
+  document.body.style.overflow = "hidden";
+}
+
+/* 취소 — 흔적을 남기지 않는다 */
+function photoClose() {
+  photoClear();
+  $("photo").hidden = true;
+  document.body.style.overflow = "";
+}
+
+function photoClear() {
+  if (shotURL) { URL.revokeObjectURL(shotURL); shotURL = null; }   /* ★ 임시 주소 반납 */
+  var img = $("shot");
+  img.removeAttribute("src");
+  img.hidden = true;
+  $("shotInfo").hidden = true;
+  $("shotInfo").innerHTML = "";
+  $("photoEmpty").hidden = false;
+  $("btnPhotoPick").textContent = "사진 고르기";
+  $("photoIn").value = "";        /* 같은 사진을 다시 골라도 열리도록 */
+}
+
+function photoPick() { $("photoIn").value = ""; $("photoIn").click(); }
+
+/* 사진을 화면 크기로 줄인다 — 전부 폰 안에서 */
+function shrink(bitmap) {
+  var w = bitmap.width, h = bitmap.height;
+  var long = Math.max(w, h);
+  var s = long > PHOTO_MAX ? PHOTO_MAX / long : 1;   /* ★ 작은 사진을 억지로 키우지 않는다 */
+  var nw = Math.max(1, Math.round(w * s));
+  var nh = Math.max(1, Math.round(h * s));
+
+  var c = document.createElement("canvas");
+  c.width = nw; c.height = nh;
+  var g = c.getContext("2d");
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = "high";
+  g.drawImage(bitmap, 0, 0, nw, nh);
+
+  return new Promise(function (resolve, reject) {
+    c.toBlob(function (blob) {
+      if (!blob) { reject(new Error("이미지를 만들지 못했습니다.")); return; }
+      resolve({ blob: blob, w: nw, h: nh, scaled: s !== 1 });
+    }, "image/jpeg", PHOTO_Q);
+  });
+}
+
+/* 파일 → 그림. 사진이 눕지 않도록 EXIF 방향을 따른다. */
+function decode(file) {
+  if (window.createImageBitmap) {
+    try {
+      return createImageBitmap(file, { imageOrientation: "from-image" });
+    } catch (e) { /* 옛 브라우저는 옵션을 모른다 — 아래로 내려간다 */ }
+  }
+  return new Promise(function (resolve, reject) {
+    var url = URL.createObjectURL(file);
+    var im = new Image();
+    im.onload = function () { URL.revokeObjectURL(url); resolve(im); };
+    im.onerror = function () { URL.revokeObjectURL(url); reject(new Error("이미지를 읽지 못했습니다.")); };
+    im.src = url;
+  });
+}
+
+function photoLoad(file) {
+  if (!file) return;                                   /* 파일창을 그냥 닫은 경우 */
+  if (!/^image\//.test(file.type || "")) {
+    alert("사진을 불러오지 못했습니다.\n\n이미지 파일이 아닙니다.");
+    return;
+  }
+
+  var ow = 0, oh = 0, osize = file.size;
+  $("btnPhotoPick").disabled = true;
+
+  decode(file).then(function (bmp) {
+    ow = bmp.width; oh = bmp.height;
+    return shrink(bmp).then(function (r) {
+      if (bmp.close) bmp.close();                      /* 원본 그림은 바로 놓아준다 */
+      return r;
+    });
+  }).then(function (r) {
+    if (shotURL) URL.revokeObjectURL(shotURL);         /* ★ 앞 사진은 먼저 버린다 (한 장만 다룬다) */
+    shotURL = URL.createObjectURL(r.blob);
+
+    var img = $("shot");
+    img.src = shotURL;
+    img.hidden = false;
+    $("photoEmpty").hidden = true;
+    $("btnPhotoPick").textContent = "다른 사진 선택";
+
+    var pct = osize ? Math.round(r.blob.size / osize * 100) : 0;
+    $("shotInfo").innerHTML =
+      "<div><b>원본</b> · " + ow + " × " + oh + " / " + kb(osize) + "</div>" +
+      "<div><b>미리보기</b> · " + r.w + " × " + r.h + " / " + kb(r.blob.size) +
+      (osize ? " (" + pct + "%)" : "") + "</div>" +
+      "<div>" + (r.scaled ? "긴 변 " + PHOTO_MAX + "px 로 줄였습니다"
+                          : "원본이 작아 그대로 두었습니다") +
+      " · 품질 " + PHOTO_Q + "</div>";
+    $("shotInfo").hidden = false;
+  }).catch(function (e) {
+    /* ★ 실패해도 저장소는 건드리지 않는다 — 애초에 부르지 않는다 */
+    alert("사진을 불러오지 못했습니다.\n\n" + (e && e.message ? e.message : e));
+  }).then(function () {
+    $("btnPhotoPick").disabled = false;
+    $("photoIn").value = "";
+  });
+}
+
+/* ==================================================================
    백업 · 복구 (STEP 8)
    「코드는 다시 만들 수 있지만, 왜 이 자재를 바꿨는지는 다시 만들 수 없다」
    ================================================================== */
@@ -1148,6 +1331,10 @@ function boot() {
   $("btnHistNew").addEventListener("click", histOpen);
   $("btnHistCancel").addEventListener("click", histClose);
   $("btnHistSave").addEventListener("click", histSave);
+  $("btnPhoto").addEventListener("click", photoOpen);
+  $("btnPhotoPick").addEventListener("click", photoPick);
+  $("btnPhotoClose").addEventListener("click", photoClose);
+  $("photoIn").addEventListener("change", function () { photoLoad(this.files && this.files[0]); });
   $("btnBackup").addEventListener("click", backup);
   $("btnRestore").addEventListener("click", restorePick);
   $("fileIn").addEventListener("change", function () { restoreFile(this.files && this.files[0]); });
