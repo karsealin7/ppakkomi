@@ -440,8 +440,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 10";
-var BUILD       = "2026-09-11d";
+var APP_VERSION = "V0.1 · STEP 11";
+var BUILD       = "2026-09-11e";
 var BACKUP_FORMAT = 1;
 var SCHEMA      = 1;
 
@@ -1316,8 +1316,36 @@ function diagnose() {
            (adoptedCount ? adoptedCount + "건을 자재특징·자재스토리로 이어받음"
                          : "이어받을 자재 없음") + "</div>");
 
+  /* 오프라인 준비 상태 — 비행기 모드로 시험하기 전에 폰이 직접 알려준다 (STEP 11) */
+  if ("serviceWorker" in navigator && window.caches) {
+    jobs.push(
+      Promise.all([
+        navigator.serviceWorker.getRegistration(),
+        caches.keys().then(function (ks) {
+          var mine = ks.filter(function (k) { return k.indexOf("ppakkomi-shell-") === 0; });
+          if (!mine.length) return { n: 0, name: "" };
+          return caches.open(mine[0]).then(function (c) {
+            return c.keys().then(function (rs) { return { n: rs.length, name: mine[0] }; });
+          });
+        })
+      ]).then(function (r) {
+        var reg = r[0], cache = r[1];
+        var active = reg && reg.active;
+        var s = active && cache.n
+          ? "🟢 준비됨 — 앱 파일 " + cache.n + "개 저장됨 (통신 없이 열립니다)"
+          : (active ? "🟡 등록됨 · 아직 저장 중 — 한 번 더 열어 주세요"
+                    : "🟡 준비 중 — 온라인에서 한 번 더 열어 주세요");
+        out.push("<div><b>오프라인</b> · " + s + "</div>");
+        if (cache.name) out.push("<div><b>앱 캐시</b> · " + esc(cache.name) + "</div>");
+      }).catch(function () {
+        out.push("<div><b>오프라인</b> · 🟡 확인 불가</div>");
+      })
+    );
+  } else {
+    out.push("<div><b>오프라인</b> · 🔴 이 브라우저는 지원하지 않습니다</div>");
+  }
+
   Promise.all(jobs).then(function () {
-    out.push('<div style="margin-top:8px">아직 오프라인 기능은 넣지 않았습니다 (STEP 10·11).</div>');
     d.innerHTML = out.join("");
   });
 }
@@ -1364,6 +1392,22 @@ function boot() {
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", boot);
 } else { boot(); }
+
+/* ==================================================================
+   오프라인 실행 등록 (STEP 11)
+   ★ 이 블록은 위의 어떤 코드와도 얽히지 않는다.
+     등록이 실패해도 빠꼬미는 지금까지처럼 그대로 돈다.
+   ★ 자재 데이터와 무관하다. 프로그램 파일만 폰에 담아 두는 일이다.
+   ================================================================== */
+(function () {
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", function () {
+    try {
+      /* 상대경로 — 자리(scope)는 /ppakkomi/ 안으로 한정된다 */
+      navigator.serviceWorker.register("./sw.js").catch(function () { /* 조용히 넘어간다 */ });
+    } catch (e) { /* 조용히 넘어간다 */ }
+  });
+})();
 </script>
 </body>
 </html>
