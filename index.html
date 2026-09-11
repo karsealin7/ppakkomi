@@ -6,6 +6,20 @@
 <meta name="theme-color" content="#1b56b8">
 <title>빠꼬미</title>
 
+<!-- ===== 홈 화면 설치 (STEP 10) =====
+     ★ 경로는 전부 상대경로(./)다.
+       GitHub Pages 는 사이트 루트가 아니라 /ppakkomi/ 아래에 있다.
+       "/manifest.webmanifest" 처럼 쓰면 엉뚱한 곳을 찾는다.
+     ★ 주소(origin)는 그대로다 — 홈 화면에서 열어도 기존 IndexedDB 를 그대로 본다. -->
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="빠꼬미">
+<meta name="application-name" content="빠꼬미">
+
 <!-- ==================================================================
      빠꼬미 Mobile-First V0.1 — STEP 1
      기본 화면 + IndexedDB 초기화 + 자재 등록
@@ -426,8 +440,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 9D";
-var BUILD       = "2026-09-11c";
+var APP_VERSION = "V0.1 · STEP 10";
+var BUILD       = "2026-09-11d";
 var BACKUP_FORMAT = 1;
 var SCHEMA      = 1;
 
