@@ -248,6 +248,26 @@ input:focus,textarea:focus{outline:none;border-color:var(--blue)}
   margin:10px 2px 0 2px;font-size:13px;color:var(--dim);line-height:1.55;
   padding-bottom:16px;border-bottom:2px solid var(--line);
 }
+
+/* 사진 보관 선택 (STEP 12) — 기본은 꺼져 있다 */
+#keepRow{
+  display:flex;align-items:center;gap:12px;margin-top:12px;
+  padding:12px 14px;background:#fff;border:2px solid var(--line);border-radius:12px;
+  cursor:pointer;
+}
+#keepRow.on{border-color:var(--ok);background:#f3faf6}
+#keepPhoto{width:26px;height:26px;flex:0 0 26px;accent-color:#12694a;margin:0}
+#keepRow .t{font-size:16.5px;font-weight:700}
+#keepRow .s{display:block;font-size:12.5px;font-weight:400;color:var(--dim);margin-top:2px}
+#keepNote{margin:8px 2px 0 2px;font-size:12.5px;color:var(--warn);line-height:1.5}
+.card .ph{
+  display:inline-block;margin-top:8px;margin-left:6px;padding:2px 9px;
+  background:#eef2fb;color:var(--blue-d);border-radius:6px;font-size:13.5px;font-weight:700;
+}
+#shotTag{
+  display:inline-block;margin-bottom:8px;padding:3px 10px;border-radius:6px;
+  background:#eef7f1;color:var(--ok);font-size:13px;font-weight:700;
+}
 #photoIn{display:none}
 
 /* ---------- 데이터 관리 (STEP 8) ---------- */
@@ -311,6 +331,7 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
       빠꼬미의 기억은 이 폰 안에만 있습니다.
       폰을 바꾸거나 브라우저 저장공간을 지우면 사라지므로,
       <b>가끔 백업 파일을 만들어 두십시오.</b>
+      <br><b>보관한 사진은 이 백업에 들어가지 않습니다.</b>
     </p>
     <button class="big" id="btnBackup">JSON 백업 파일 저장</button>
 
@@ -339,11 +360,21 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 
     <!-- ===== 사진 (STEP 9D) — 보면서 아래에 적는다. 저장되지 않는다 ===== -->
     <div id="shotBox" hidden>
+      <span id="shotTag" hidden>보관 중인 사진</span>
       <img id="shot" alt="선택한 사진">
       <div id="shotInfo"></div>
       <button type="button" id="btnPhotoPick">다른 사진 선택</button>
+
+      <label id="keepRow" for="keepPhoto">
+        <input type="checkbox" id="keepPhoto">
+        <span class="t">📷 이 자재 사진 보관
+          <span class="s">꺼 두면 저장한 뒤 사진은 버립니다</span>
+        </span>
+      </label>
+      <p id="keepNote" hidden>사진은 JSON 백업에 들어가지 않습니다. 폰 안에만 남습니다.</p>
+
       <p class="memo">
-        이 사진은 <b>저장되지 않습니다.</b> 보면서 옮겨 적기 위한 것입니다.
+        보관을 켜지 않으면 이 사진은 <b>저장되지 않습니다.</b>
         위로 올리면 언제든 다시 볼 수 있습니다.
       </p>
     </div>
@@ -440,8 +471,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 11";
-var BUILD       = "2026-09-11e";
+var APP_VERSION = "V0.1 · STEP 12";
+var BUILD       = "2026-09-12a";
 var BACKUP_FORMAT = 1;
 var SCHEMA      = 1;
 
@@ -455,41 +486,89 @@ var STORE = (function () {
   var DB_NAME = "ppakkomi";
   var db = null;
 
-  /* 열기 — 처음이면 그릇을 만든다 */
+  /* 있어야 하는 그릇들. 없는 것만 만든다 — 있는 것은 쳐다보지도 않는다. */
+  var NEED = ["materials", "history", "meta", "photos"];
+
+  function makeStores(d) {
+    if (!d.objectStoreNames.contains("materials")) {
+      var m = d.createObjectStore("materials", { keyPath: "id" });
+      m.createIndex("partNo", "partNo", { unique: false });
+      m.createIndex("updatedAt", "updatedAt", { unique: false });
+    }
+    if (!d.objectStoreNames.contains("history")) {
+      var h = d.createObjectStore("history", { keyPath: "id" });
+      h.createIndex("materialId", "materialId", { unique: false });
+      h.createIndex("date", "date", { unique: false });
+    }
+    if (!d.objectStoreNames.contains("meta")) {
+      d.createObjectStore("meta", { keyPath: "k" });
+    }
+    /* 사진 (STEP 12) — 자재 하나당 한 장.
+       keyPath 가 materialId 라서 같은 자재에 두 장이 쌓일 수 없다. */
+    if (!d.objectStoreNames.contains("photos")) {
+      d.createObjectStore("photos", { keyPath: "materialId" });
+    }
+    /* ★ deleteObjectStore 는 이 파일 어디에도 없다. 만들기만 한다. */
+  }
+
+  function missing(d) {
+    for (var i = 0; i < NEED.length; i++) {
+      if (!d.objectStoreNames.contains(NEED[i])) return true;
+    }
+    return false;
+  }
+
+  function hold(d, resolve) {
+    db = d;
+    db.onversionchange = function () { try { db.close(); } catch (e) {} };
+    resolve(db);
+  }
+
+  /*
+    열기 — ★ 버전 번호를 지정하지 않는다 (STEP 12 에서 바꾼 방식)
+
+    예전에는 indexedDB.open(DB_NAME, 1) 처럼 번호를 박아 두었다.
+    그러면 폰의 DB 가 2로 올라간 뒤에 옛 index.html 로 되돌렸을 때
+    "1번을 달라"고 요청하다가 거절당해 **앱이 아예 열리지 않는다.**
+
+    그래서 이제는
+      ① 번호 없이 열어 지금 있는 것을 그대로 받고
+      ② 필요한 그릇이 빠져 있을 때만 한 칸 올려 만든다.
+    앞으로 어느 버전의 빠꼬미를 올리든 이 사고가 나지 않는다.
+  */
   function open() {
     return new Promise(function (resolve, reject) {
       if (!window.indexedDB) { reject(new Error("이 브라우저는 IndexedDB 를 지원하지 않습니다.")); return; }
+
       var req;
-      try { req = indexedDB.open(DB_NAME, SCHEMA); }
+      try { req = indexedDB.open(DB_NAME); }         /* 번호 없이 */
       catch (e) { reject(e); return; }
 
-      req.onupgradeneeded = function (ev) {
-        var d = ev.target.result;
-
-        /* 자재 */
-        if (!d.objectStoreNames.contains("materials")) {
-          var m = d.createObjectStore("materials", { keyPath: "id" });
-          m.createIndex("partNo", "partNo", { unique: false });
-          m.createIndex("updatedAt", "updatedAt", { unique: false });
-        }
-        /* 히스토리 — STEP 7 에서 쓴다. 그릇은 지금 만들어 둔다.
-           (나중에 만들면 스키마를 올려야 하고, 그때가 데이터가 있는 때다) */
-        if (!d.objectStoreNames.contains("history")) {
-          var h = d.createObjectStore("history", { keyPath: "id" });
-          h.createIndex("materialId", "materialId", { unique: false });
-          h.createIndex("date", "date", { unique: false });
-        }
-        /* 설정·스키마버전·마지막백업 */
-        if (!d.objectStoreNames.contains("meta")) {
-          d.createObjectStore("meta", { keyPath: "k" });
-        }
-      };
+      /* DB 가 아예 없던 폰 — 여기서 처음 만들어진다 */
+      req.onupgradeneeded = function (ev) { makeStores(ev.target.result); };
 
       req.onsuccess = function () {
-        db = req.result;
-        db.onversionchange = function () { try { db.close(); } catch (e) {} };
-        resolve(db);
+        var d = req.result;
+        if (!missing(d)) { hold(d, resolve); return; }   /* 이미 다 있다 */
+
+        /* 빠진 그릇이 있다 → 한 칸만 올려서 '추가'한다.
+           기존 materials · history · meta 는 그대로 남는다. */
+        var next = d.version + 1;
+        d.close();
+        var up;
+        try { up = indexedDB.open(DB_NAME, next); }
+        catch (e) { reject(e); return; }
+
+        up.onupgradeneeded = function (ev) { makeStores(ev.target.result); };
+        up.onsuccess = function () { hold(up.result, resolve); };
+        up.onerror = function () {
+          reject(up.error || new Error("저장소를 넓히지 못했습니다."));
+        };
+        up.onblocked = function () {
+          reject(new Error("빠꼬미가 다른 탭에서 열려 있습니다.\n그 탭을 닫고 다시 열어 주세요."));
+        };
       };
+
       req.onerror = function () {
         reject(req.error || new Error("저장소를 열지 못했습니다."));
       };
@@ -497,6 +576,12 @@ var STORE = (function () {
         reject(new Error("빠꼬미가 다른 탭에서 열려 있습니다. 그 탭을 닫아 주세요."));
       };
     });
+  }
+
+  /* 지금 DB 가 몇 번인지 / 어떤 그릇이 있는지 (진단용) */
+  function shape() {
+    if (!db) return { version: 0, stores: [] };
+    return { version: db.version, stores: Array.prototype.slice.call(db.objectStoreNames) };
   }
 
   function tx(store, mode) { return db.transaction(store, mode).objectStore(store); }
@@ -510,6 +595,7 @@ var STORE = (function () {
 
   return {
     open: open,
+    shape: shape,
     ready: function () { return !!db; },
 
     put: function (store, obj) {
@@ -557,6 +643,9 @@ var STORE = (function () {
         t.onabort = function () { reject(t.error || new Error("복구가 취소되었습니다. 기존 데이터는 그대로입니다.")); };
       });
     },
+
+    /* 열쇠만 가져온다 — 사진 목록을 확인할 때 사진 알맹이까지 끌어올리지 않으려고 */
+    keys: function (store) { return ask(tx(store, "readonly").getAllKeys()); },
 
     all: function (store) { return ask(tx(store, "readonly").getAll()); },
     get: function (store, id) { return ask(tx(store, "readonly").get(id)); },
@@ -659,6 +748,7 @@ function histSort(a, b) {
 var $ = function (id) { return document.getElementById(id); };
 var cache = [];          /* 화면이 보고 있는 자재 목록 (메모리) */
 var histCount = {};      /* { 자재id: 히스토리 건수 } */
+var photoHas  = {};      /* { 자재id: true }  보관된 사진이 있는가 (알맹이는 안 올린다) */
 var storageOK = false;
 
 function esc(s) {
@@ -717,7 +807,12 @@ function render() {
     html += line("특징", m.feature);
     html += line("스토리", m.story, "story");
     html += "</dl>";
-    if (histCount[m.id]) html += '<div><span class="hn">🕒 히스토리 ' + histCount[m.id] + "건</span></div>";
+    if (histCount[m.id] || photoHas[m.id]) {
+      html += "<div>";
+      if (histCount[m.id]) html += '<span class="hn">🕒 히스토리 ' + histCount[m.id] + "건</span>";
+      if (photoHas[m.id]) html += '<span class="ph">📷 사진 있음</span>';
+      html += "</div>";
+    }
     html += '<div class="act"><button type="button" class="editbtn" data-id="' +
             esc(m.id) + '">수정</button></div>';
     html += "</div>";
@@ -747,6 +842,12 @@ function reload() {
       histCount[k] = (histCount[k] || 0) + 1;
     }
   }).catch(function () { histCount = {}; }).then(function () {
+    /* 사진은 '있다/없다'만 본다 — 목록을 그릴 때 사진 알맹이를 끌어올리지 않는다 */
+    return STORE.keys("photos").then(function (ks) {
+      photoHas = {};
+      for (var j = 0; j < ks.length; j++) photoHas[ks[j]] = true;
+    }).catch(function () { photoHas = {}; });
+  }).then(function () {
     return reloadMaterials();
   });
 }
@@ -805,6 +906,9 @@ function openForm(id) {
     use: m ? m.use : "", feature: m ? m.feature : "", story: m ? m.story : ""
   };
   for (var i = 0; i < FIELDS.length; i++) $("f_" + FIELDS[i]).value = v[FIELDS[i]] || "";
+
+  /* 이미 보관해 둔 사진이 있으면 꺼내서 보여준다 (STEP 12) */
+  if (m && photoHas[m.id]) showKeptPhoto(m.id);
 
   /* 히스토리는 이미 저장된 자재에만 붙는다 (자재 id 가 있어야 연결되므로) */
   $("histWrap").hidden = !m;
@@ -976,17 +1080,66 @@ function save() {
 
   var isEdit = !!old;
   $("btnSave").disabled = true;
+  /* ★ 사진 처리는 자재를 저장한 '다음'에 한다.
+     사진이 실패해도 자재 글자는 이미 안전하게 들어가 있다. */
+  var keep = $("keepPhoto").checked;
+  var blob = shotBlob;
+  var hadPhoto = !!photoHas[m.id];
+  var fresh = !shotFromDB;
+  var photoMsg = "";
+
   STORE.put("materials", m).then(function () {
+    return handlePhoto(m.id, keep, blob, hadPhoto, fresh).then(function (msg) { photoMsg = msg; });
+  }).then(function () {
     closeForm();
     if (!isEdit) $("q").value = "";   /* 새로 넣은 것이 검색어에 가려지지 않게 */
     return reload();
   }).then(function () {
-    toast((isEdit ? "수정했습니다 — " : "저장했습니다 — ") + m.name);
+    toast((isEdit ? "수정했습니다 — " : "저장했습니다 — ") + m.name + photoMsg,
+          photoMsg ? 3600 : 2600);
   }).catch(function (e) {
     alert((isEdit ? "수정" : "저장") + "하지 못했습니다.\n\n" + (e && e.message ? e.message : e));
   }).then(function () {
     $("btnSave").disabled = false;
   });
+}
+
+/* ---------- 사진 보관 처리 (STEP 12) ----------
+   ★ 절대 실패를 밖으로 던지지 않는다.
+     자재는 이미 저장됐다. 사진이 안 되더라도 그 사실만 알려 주고 넘어간다.
+   ★ 여기서 건드리는 것은 photos 뿐이다. materials · history 에 손대지 않는다. */
+function handlePhoto(materialId, keep, blob, hadPhoto, isFresh) {
+  /* 보관을 껐다 — 새 사진이면 그냥 버리고, 보관 중이던 것이면 지운다 */
+  if (!keep) {
+    if (!hadPhoto) return Promise.resolve("");
+    return STORE.remove("photos", materialId)
+      .then(function () { return " · 사진 보관 해제"; })
+      .catch(function () { return " · (사진을 지우지 못했습니다)"; });
+  }
+
+  /* 보관을 켰는데 사진이 없다 */
+  if (!blob) return Promise.resolve("");
+
+  /* 이미 보관돼 있고 사진도 그대로다 → 다시 쓸 필요가 없다 */
+  if (!isFresh && hadPhoto) return Promise.resolve("");
+
+  var rec = {
+    materialId: materialId,
+    blob: blob,
+    size: blob.size,
+    type: blob.type || "image/jpeg",
+    w: $("shot").naturalWidth || 0,
+    h: $("shot").naturalHeight || 0,
+    createdAt: nowISO()
+  };
+  return STORE.put("photos", rec)
+    .then(function () { return hadPhoto ? " · 사진 교체됨" : " · 사진 보관됨"; })
+    .catch(function (e) {
+      var quota = e && (e.name === "QuotaExceededError" ||
+                        String(e.message || "").indexOf("quota") >= 0);
+      return quota ? " · ⚠️ 저장공간이 부족해 사진은 보관하지 못했습니다"
+                   : " · ⚠️ 사진은 보관하지 못했습니다 (자재는 저장됨)";
+    });
 }
 
 /* ---------- 삭제 (STEP 5) ----------
@@ -1022,6 +1175,10 @@ function del() {
     });
     return chain;
   }).then(function () {
+    /* 보관해 둔 사진이 있으면 그것도 함께 (이 자재 것만) */
+    if (!photoHas[target]) return null;
+    return STORE.remove("photos", target).catch(function () { return null; });
+  }).then(function () {
     return STORE.remove("materials", target);
   }).then(function () {
     closeForm();
@@ -1043,7 +1200,9 @@ function del() {
    ================================================================== */
 var PHOTO_MAX = 1600;      /* 긴 변 한계 — 명판 글자가 읽히는 선 */
 var PHOTO_Q   = 0.85;      /* JPEG 품질 — 더 낮추면 품번이 뭉갠다 */
-var shotURL = null;        /* 지금 화면에 띄운 임시 주소 (반드시 되돌려준다) */
+var shotURL  = null;       /* 지금 화면에 띄운 임시 주소 (반드시 되돌려준다) */
+var shotBlob = null;       /* 줄여 놓은 사진 알맹이 — 보관을 켰을 때만 저장된다 (STEP 12) */
+var shotFromDB = false;    /* 지금 보이는 것이 '이미 보관된' 사진인가 */
 
 function kb(n) {
   if (n >= 1048576) return (n / 1048576).toFixed(1) + "MB";
@@ -1052,14 +1211,45 @@ function kb(n) {
 
 function photoClear() {
   if (shotURL) { URL.revokeObjectURL(shotURL); shotURL = null; }   /* ★ 임시 주소 반납 */
+  shotBlob = null;
+  shotFromDB = false;
   var img = $("shot");
   img.removeAttribute("src");
   $("shotInfo").innerHTML = "";
   $("shotBox").hidden = true;
+  $("shotTag").hidden = true;
   $("photoIn").value = "";        /* 같은 사진을 다시 골라도 열리도록 */
+  setKeep(false);                 /* ★ 보관 선택은 언제나 꺼진 상태에서 시작한다 */
+}
+
+/* 보관 스위치 */
+function setKeep(on) {
+  $("keepPhoto").checked = !!on;
+  $("keepRow").className = on ? "on" : "";
+  $("keepNote").hidden = !on;
 }
 
 function photoPick() { $("photoIn").value = ""; $("photoIn").click(); }
+
+/* 이미 보관 중인 사진을 수정 화면에 꺼내 보여준다 (STEP 12) */
+function showKeptPhoto(materialId) {
+  return STORE.get("photos", materialId).then(function (rec) {
+    if (!rec || !rec.blob) return;
+    if (shotURL) URL.revokeObjectURL(shotURL);
+    shotURL = URL.createObjectURL(rec.blob);
+    shotBlob = rec.blob;
+    shotFromDB = true;
+
+    $("shot").src = shotURL;
+    $("shotTag").hidden = false;
+    $("shotInfo").innerHTML =
+      "<div><b>보관 중</b> · " + (rec.w || "?") + " × " + (rec.h || "?") +
+      " / " + kb(rec.size || (rec.blob && rec.blob.size) || 0) + "</div>" +
+      "<div>" + esc(String(rec.createdAt || "").slice(0, 10)) + " 에 보관</div>";
+    $("shotBox").hidden = false;
+    setKeep(true);                     /* 이미 보관 중이므로 켜진 상태로 보여준다 */
+  }).catch(function () { /* 못 읽어도 자재 수정에는 지장 없다 */ });
+}
 
 /* 사진을 화면 크기로 줄인다 — 전부 폰 안에서 */
 function shrink(bitmap) {
@@ -1123,6 +1313,9 @@ function photoLoad(file) {
 
     if (shotURL) URL.revokeObjectURL(shotURL);         /* ★ 앞 사진은 먼저 버린다 (한 장만 다룬다) */
     shotURL = URL.createObjectURL(r.blob);
+    shotBlob = r.blob;                                 /* 보관을 켰을 때만 쓰인다 */
+    shotFromDB = false;
+    $("shotTag").hidden = true;
 
     var img = $("shot");
     img.src = shotURL;
@@ -1311,7 +1504,28 @@ function diagnose() {
   jobs.push(STORE.count("history").then(function (n) {
     out.push("<div><b>히스토리</b> · " + n + "건</div>");
   }).catch(function () {}));
-  out.push("<div><b>DB 버전</b> · " + SCHEMA + " (STEP 1 과 같음 — 기존 자재를 건드리지 않았습니다)</div>");
+  var sh = STORE.shape();
+  out.push("<div><b>DB</b> · 버전 " + sh.version + " · " + sh.stores.join(" / ") + "</div>");
+
+  /* 사진 — 몇 장, 얼마나, 그리고 주인 없는 것은 없는지 */
+  jobs.push(STORE.keys("photos").then(function (ks) {
+    if (!ks.length) { out.push("<div><b>보관 사진</b> · 없음</div>"); return; }
+    var lost = 0;
+    for (var i = 0; i < ks.length; i++) {
+      var found = false;
+      for (var j = 0; j < cache.length; j++) if (cache[j].id === ks[i]) { found = true; break; }
+      if (!found) lost++;
+    }
+    return STORE.all("photos").then(function (rows) {
+      var bytes = 0;
+      for (var k = 0; k < rows.length; k++) bytes += (rows[k].size || 0);
+      out.push("<div><b>보관 사진</b> · " + ks.length + "장 / " +
+               (bytes / 1048576).toFixed(1) + "MB</div>");
+      if (lost) out.push("<div>⚠️ 연결이 끊긴 사진 " + lost +
+                         "장 (자재가 지워졌거나 예전 백업으로 복구한 경우) — 지우지 않고 두었습니다</div>");
+      out.push("<div>사진은 JSON 백업에 들어가지 않습니다</div>");
+    });
+  }).catch(function () {}));
   out.push("<div><b>예전 이름 호환</b> · " +
            (adoptedCount ? adoptedCount + "건을 자재특징·자재스토리로 이어받음"
                          : "이어받을 자재 없음") + "</div>");
@@ -1365,6 +1579,7 @@ function boot() {
   $("btnHistSave").addEventListener("click", histSave);
   $("btnPhoto").addEventListener("click", photoPick);
   $("btnPhotoPick").addEventListener("click", photoPick);
+  $("keepPhoto").addEventListener("change", function () { setKeep(this.checked); });
   $("photoIn").addEventListener("change", function () { photoLoad(this.files && this.files[0]); });
   $("btnBackup").addEventListener("click", backup);
   $("btnRestore").addEventListener("click", restorePick);
