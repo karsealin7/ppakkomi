@@ -213,30 +213,27 @@ input:focus,textarea:focus{outline:none;border-color:var(--blue)}
 }
 #btnPhoto:active{background:#eef2fb}
 
-#photo{
-  position:fixed;inset:0;z-index:60;background:var(--bg);
-  overflow-y:auto;-webkit-overflow-scrolling:touch;
-}
-#photo .top{
-  position:sticky;top:0;background:var(--blue);color:#fff;
-  padding:calc(14px + env(safe-area-inset-top,0)) 16px 14px 16px;
-  font-size:19px;font-weight:800;
-}
-#photo .body{padding:14px 14px 30px 14px;max-width:640px;margin:0 auto}
+/* 사진은 등록 화면 맨 위에 붙는다 — 보면서 아래에 적기 위해 (STEP 9D) */
+#shotBox{margin:2px 0 6px 0}
 #shot{
   width:100%;max-width:100%;height:auto;display:block;
   border:1px solid var(--line);border-radius:12px;background:#fff;
-}
-#photoEmpty{
-  text-align:center;color:var(--dim);font-size:15.5px;line-height:1.6;
-  padding:46px 14px;background:#fff;border:1px dashed var(--line);border-radius:12px;
 }
 #shotInfo{
   margin-top:10px;background:#fff;border:1px solid var(--line);border-radius:10px;
   padding:10px 13px;font-size:13.5px;color:var(--dim);line-height:1.6;
 }
 #shotInfo b{color:var(--ink)}
-#photo .memo{margin:14px 2px 0 2px;font-size:13px;color:var(--dim);line-height:1.55}
+#btnPhotoPick{
+  display:block;width:100%;height:48px;margin-top:10px;
+  border:2px solid var(--blue);border-radius:11px;background:#fff;color:var(--blue);
+  font-size:16px;font-weight:700;
+}
+#btnPhotoPick:active{background:#eef2fb}
+#shotBox .memo{
+  margin:10px 2px 0 2px;font-size:13px;color:var(--dim);line-height:1.55;
+  padding-bottom:16px;border-bottom:2px solid var(--line);
+}
 #photoIn{display:none}
 
 /* ---------- 데이터 관리 (STEP 8) ---------- */
@@ -288,7 +285,7 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
   <p class="qtip">여러 단어를 띄어 쓰면 <b>모두 들어 있는</b> 자재만 나옵니다 — 예) 검은색 M18</p>
 
   <button class="big" id="btnNew">＋ 자재 등록</button>
-  <button type="button" id="btnPhoto">📷 사진 보기</button>
+  <button type="button" id="btnPhoto">📷 사진 보며 등록</button>
   <input type="file" id="photoIn" accept="image/*">
 
   <div class="rowlabel"><span id="listTitle">최근 등록한 자재</span><span id="listCount"></span></div>
@@ -325,6 +322,18 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 <div id="form" hidden>
   <div class="top" id="formTitle">자재 등록</div>
   <div class="body">
+
+    <!-- ===== 사진 (STEP 9D) — 보면서 아래에 적는다. 저장되지 않는다 ===== -->
+    <div id="shotBox" hidden>
+      <img id="shot" alt="선택한 사진">
+      <div id="shotInfo"></div>
+      <button type="button" id="btnPhotoPick">다른 사진 선택</button>
+      <p class="memo">
+        이 사진은 <b>저장되지 않습니다.</b> 보면서 옮겨 적기 위한 것입니다.
+        위로 올리면 언제든 다시 볼 수 있습니다.
+      </p>
+    </div>
+
     <label for="f_name">명칭 <span class="req">*</span></label>
     <input id="f_name" type="text" placeholder="예) 근접센서" enterkeyhint="next">
     <div class="hint">현장에서 부르는 이름 그대로 적으셔도 됩니다.</div>
@@ -410,28 +419,6 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
   </div>
 </div>
 
-<!-- ========================= 사진 (STEP 9A) ========================= -->
-<div id="photo" hidden>
-  <div class="top">사진</div>
-  <div class="body">
-    <div id="photoEmpty">
-      아래 <b>사진 고르기</b>를 누르면<br>카메라 또는 갤러리를 열 수 있습니다.
-    </div>
-    <img id="shot" alt="선택한 사진" hidden>
-    <div id="shotInfo" hidden></div>
-
-    <div class="btns">
-      <button type="button" class="big ghost" id="btnPhotoClose">취소</button>
-      <button type="button" class="big" id="btnPhotoPick">사진 고르기</button>
-    </div>
-
-    <p class="memo">
-      이 사진은 <b>저장되지 않습니다.</b> 화면을 닫으면 사라집니다.
-      자재에 붙여 보관하는 기능은 다음 단계(9B)에서 만듭니다.
-    </p>
-  </div>
-</div>
-
 <div id="toast" hidden></div>
 
 <script>
@@ -439,8 +426,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 9A";
-var BUILD       = "2026-09-11b";
+var APP_VERSION = "V0.1 · STEP 9D";
+var BUILD       = "2026-09-11c";
 var BACKUP_FORMAT = 1;
 var SCHEMA      = 1;
 
@@ -786,6 +773,7 @@ var editingId = null;      /* null 이면 새 등록, 값이 있으면 그 자�
 
 /* id 를 넘기면 수정, 안 넘기면 새 등록 */
 function openForm(id) {
+  photoClear();          /* 일반 등록·수정 화면에 지난 사진이 남지 않게 */
   editingId = id || null;
   var m = null;
   if (editingId) {
@@ -896,7 +884,23 @@ function histSave() {
   });
 }
 
+/* 취소 — 사진을 보며 적던 중이면 한 번 붙잡는다 (STEP 9D 지시 §13).
+   ★ 사진 없이 쓰던 기존 등록·수정 화면의 동작은 바꾸지 않는다. */
+function cancelForm() {
+  if (!$("shotBox").hidden) {
+    var typed = false;
+    for (var i = 0; i < FIELDS.length; i++) {
+      if ($("f_" + FIELDS[i]).value.trim()) { typed = true; break; }
+    }
+    if (typed && !confirm("작성 중인 자재정보가 있습니다.\n" +
+                          "취소하면 입력 내용이 사라집니다.\n\n" +
+                          "취소하고 나가시겠습니까?")) return;   /* [계속 작성] */
+  }
+  closeForm();
+}
+
 function closeForm() {
+  photoClear();          /* ★ 임시 사진은 여기서 확실히 버린다 (저장 성공·취소 모두) */
   $("form").hidden = true;
   $("histForm").hidden = true;
   $("btnHistNew").hidden = false;
@@ -1032,28 +1036,12 @@ function kb(n) {
   return Math.round(n / 1024) + "KB";
 }
 
-function photoOpen() {
-  $("photo").hidden = false;
-  $("photo").scrollTop = 0;
-  document.body.style.overflow = "hidden";
-}
-
-/* 취소 — 흔적을 남기지 않는다 */
-function photoClose() {
-  photoClear();
-  $("photo").hidden = true;
-  document.body.style.overflow = "";
-}
-
 function photoClear() {
   if (shotURL) { URL.revokeObjectURL(shotURL); shotURL = null; }   /* ★ 임시 주소 반납 */
   var img = $("shot");
   img.removeAttribute("src");
-  img.hidden = true;
-  $("shotInfo").hidden = true;
   $("shotInfo").innerHTML = "";
-  $("photoEmpty").hidden = false;
-  $("btnPhotoPick").textContent = "사진 고르기";
+  $("shotBox").hidden = true;
   $("photoIn").value = "";        /* 같은 사진을 다시 골라도 열리도록 */
 }
 
@@ -1115,14 +1103,17 @@ function photoLoad(file) {
       return r;
     });
   }).then(function (r) {
+    /* ★ 사진이 준비된 다음에야 등록 화면을 연다 (지시 §14).
+       이미 열려 있으면 = 「다른 사진 선택」 → 적어 둔 내용은 그대로 두고 사진만 바꾼다. */
+    if ($("form").hidden) openForm();
+
     if (shotURL) URL.revokeObjectURL(shotURL);         /* ★ 앞 사진은 먼저 버린다 (한 장만 다룬다) */
     shotURL = URL.createObjectURL(r.blob);
 
     var img = $("shot");
     img.src = shotURL;
-    img.hidden = false;
-    $("photoEmpty").hidden = true;
-    $("btnPhotoPick").textContent = "다른 사진 선택";
+    $("shotBox").hidden = false;
+    $("form").scrollTop = 0;
 
     var pct = osize ? Math.round(r.blob.size / osize * 100) : 0;
     $("shotInfo").innerHTML =
@@ -1132,7 +1123,6 @@ function photoLoad(file) {
       "<div>" + (r.scaled ? "긴 변 " + PHOTO_MAX + "px 로 줄였습니다"
                           : "원본이 작아 그대로 두었습니다") +
       " · 품질 " + PHOTO_Q + "</div>";
-    $("shotInfo").hidden = false;
   }).catch(function (e) {
     /* ★ 실패해도 저장소는 건드리지 않는다 — 애초에 부르지 않는다 */
     alert("사진을 불러오지 못했습니다.\n\n" + (e && e.message ? e.message : e));
@@ -1325,15 +1315,14 @@ function boot() {
 
   /* ★ 클릭 이벤트가 id 인 것처럼 넘어가지 않게 감싼다 */
   $("btnNew").addEventListener("click", function () { openForm(); });
-  $("btnCancel").addEventListener("click", closeForm);
+  $("btnCancel").addEventListener("click", cancelForm);
   $("btnSave").addEventListener("click", save);
   $("btnDelete").addEventListener("click", del);
   $("btnHistNew").addEventListener("click", histOpen);
   $("btnHistCancel").addEventListener("click", histClose);
   $("btnHistSave").addEventListener("click", histSave);
-  $("btnPhoto").addEventListener("click", photoOpen);
+  $("btnPhoto").addEventListener("click", photoPick);
   $("btnPhotoPick").addEventListener("click", photoPick);
-  $("btnPhotoClose").addEventListener("click", photoClose);
   $("photoIn").addEventListener("change", function () { photoLoad(this.files && this.files[0]); });
   $("btnBackup").addEventListener("click", backup);
   $("btnRestore").addEventListener("click", restorePick);
