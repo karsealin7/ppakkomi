@@ -190,6 +190,10 @@ input:focus,textarea:focus{outline:none;border-color:var(--blue)}
   text-align:center;color:var(--dim);font-size:14.5px;padding:20px 10px;margin-top:10px;
   border:1px dashed var(--line);border-radius:10px;background:#fff;
 }
+#srchNote{
+  margin:-2px 2px 10px 2px;padding:7px 11px;border-radius:8px;
+  background:#eef7f1;color:#12694a;font-size:13px;font-weight:700;line-height:1.45;
+}
 .card .hitrow{margin-top:7px;display:flex;flex-wrap:wrap;gap:5px}
 .card .hit{
   display:inline-block;padding:2px 8px;border-radius:5px;
@@ -365,6 +369,7 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
   <input type="file" id="photoIn" accept="image/*">
 
   <div class="rowlabel"><span id="listTitle">최근 등록한 자재</span><span id="listCount"></span></div>
+  <p id="srchNote" hidden></p>
   <div id="list"></div>
 
   <div id="dataWrap">
@@ -532,8 +537,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 14A";
-var BUILD       = "2026-09-12a";
+var APP_VERSION = "V0.1 · STEP 14B";
+var BUILD       = "2026-09-12b";
 var BACKUP_FORMAT = 1;
 var SCHEMA      = 1;
 
@@ -787,15 +792,112 @@ var FIELD_KEYS  = ["partNo", "name", "alias", "spec", "brand", "feature", "use",
 var FIELD_LABEL = { partNo:"품번", name:"품명", alias:"별명", spec:"규격", brand:"브랜드",
                     feature:"특징", use:"용도", place:"보관", story:"스토리" };
 
-var searchIdx = {};                /* { 자재id: {f:{칸별 정규화}, hay:"…"} } */
+var searchIdx = {};                /* { 자재id: {f:{칸별 정규화}, hay:"…", cho:{칸별 초성}} } */
+
+/* ==================================================================
+   한글로 쓴 영문 (STEP 14B)
+
+   ★ 현장에서는 "엠18", "오므론" 이라고 칩니다.
+     폰에서 한/영 전환은 손이 많이 가고, 장갑 끼고는 더합니다.
+   ★ 늘어나기만 합니다 — 지금 찾히던 것은 그대로 찾히고, 못 찾던 것이 더 찾힐 뿐입니다.
+   ================================================================== */
+var KO_LETTER = {                  /* 한글로 읽은 알파벳 한 글자 */
+  "에이":"a","비":"b","씨":"c","시":"c","디":"d","이":"e","에프":"f","지":"g","에이치":"h",
+  "아이":"i","제이":"j","케이":"k","엘":"l","엠":"m","엔":"n","오":"o","피":"p","큐":"q",
+  "알":"r","아르":"r","에스":"s","티":"t","유":"u","브이":"v","더블유":"w","엑스":"x","와이":"y"
+};
+var EN_LETTER = {};                /* 반대 방향 (m → 엠) */
+(function () {
+  var canon = {a:"에이",b:"비",c:"씨",d:"디",e:"이",f:"에프",g:"지",h:"에이치",i:"아이",j:"제이",
+               k:"케이",l:"엘",m:"엠",n:"엔",o:"오",p:"피",q:"큐",r:"알",s:"에스",t:"티",
+               u:"유",v:"브이",w:"더블유",x:"엑스",y:"와이"};
+  for (var k in canon) if (Object.prototype.hasOwnProperty.call(canon, k)) EN_LETTER[k] = canon[k];
+})();
+
+/* 브랜드 한글 ↔ 영문. ★ 정훈님이 실제로 부르시는 이름을 알려주시면 여기에 더합니다. */
+var BRAND_SYN = [
+  ["오므론","omron"], ["옴론","omron"], ["엘에스","ls"], ["엘에스산전","ls"],
+  ["지멘스","siemens"], ["슈나이더","schneider"], ["미쓰비시","mitsubishi"], ["미쯔비시","mitsubishi"],
+  ["파나소닉","panasonic"], ["오토닉스","autonics"], ["키엔스","keyence"],
+  ["훼스토","festo"], ["페스토","festo"], ["한영","hanyoung"], ["피앤에프","pnf"]
+];
+
+/* 낱말 하나 → 같이 찾아 볼 낱말들 (자기 자신 포함) */
+function expand(tok) {
+  var out = [tok], i, m;
+
+  for (i = 0; i < BRAND_SYN.length; i++) {
+    if (tok === BRAND_SYN[i][0] && out.indexOf(BRAND_SYN[i][1]) < 0) out.push(BRAND_SYN[i][1]);
+    if (tok === BRAND_SYN[i][1] && out.indexOf(BRAND_SYN[i][0]) < 0) out.push(BRAND_SYN[i][0]);
+  }
+
+  /* 엠18 → m18  (앞이 한글 글자이름, 뒤가 숫자로 시작할 때만) */
+  m = tok.match(/^([가-힣]{1,3})([0-9].*)$/);
+  if (m && KO_LETTER[m[1]]) {
+    var en = KO_LETTER[m[1]] + m[2];
+    if (out.indexOf(en) < 0) out.push(en);
+  }
+  /* m18 → 엠18 (반대 방향) */
+  m = tok.match(/^([a-z])([0-9].*)$/);
+  if (m && EN_LETTER[m[1]]) {
+    var ko = EN_LETTER[m[1]] + m[2];
+    if (out.indexOf(ko) < 0) out.push(ko);
+  }
+  return out;
+}
+
+/* 검색어에서 실제로 늘어난 낱말만 (화면에 알려주려고) */
+function expandedNote(toks) {
+  var pairs = [];
+  for (var i = 0; i < toks.length; i++) {
+    var alts = expand(toks[i]);
+    for (var j = 1; j < alts.length; j++) pairs.push(toks[i] + " → " + alts[j]);
+  }
+  return pairs;
+}
+
+/* ==================================================================
+   초성 검색 (STEP 14B)
+   ★ 질의가 **전부 초성일 때만** 초성으로 찾는다.
+     "ㄱㅈㅅㅅ" 는 초성 검색, "근접" 은 예전 방식, "ㄱ센서" 도 예전 방식.
+     규칙이 하나뿐이라 헷갈릴 일이 없고, 기존 검색에 영향이 없다.
+   ================================================================== */
+var CHO_TABLE = ["ㄱ","ㄲ","ㄴ","ㄷ","ㄸ","ㄹ","ㅁ","ㅂ","ㅃ","ㅅ","ㅆ","ㅇ","ㅈ","ㅉ","ㅊ","ㅋ","ㅌ","ㅍ","ㅎ"];
+
+function toCho(s) {
+  var t = String(s == null ? "" : s), out = "";
+  for (var i = 0; i < t.length; i++) {
+    var c = t.charCodeAt(i);
+    if (c >= 0xAC00 && c <= 0xD7A3) out += CHO_TABLE[Math.floor((c - 0xAC00) / 588)];
+    else if (!/\s/.test(t[i])) out += t[i].toLowerCase();
+  }
+  return out;
+}
+
+function isChoQuery(q) { return /^[ㄱ-ㅎ]{2,}$/.test(String(q).replace(/\s+/g, "")); }
 
 function buildIndex(rows) {
   searchIdx = {};
   for (var i = 0; i < rows.length; i++) {
-    var m = rows[i], f = {};
-    for (var k = 0; k < FIELD_KEYS.length; k++) f[FIELD_KEYS[k]] = norm(m[FIELD_KEYS[k]]);
-    searchIdx[m.id] = { f: f, hay: haystack(m) };
+    var m = rows[i], f = {}, cho = {};
+    for (var k = 0; k < FIELD_KEYS.length; k++) {
+      var key = FIELD_KEYS[k];
+      f[key] = norm(m[key]);
+      cho[key] = toCho(m[key]);            /* 초성 색인도 여기서 한 번만 (STEP 14B) */
+    }
+    searchIdx[m.id] = { f: f, hay: haystack(m), cho: cho };
   }
+}
+
+/* 초성으로 걸리는가 — 걸린다면 어느 칸인지도 돌려준다 */
+function choHit(m, q) {
+  var idx = searchIdx[m.id], best = null, bestW = -1;
+  for (var i = 0; i < FIELD_KEYS.length; i++) {
+    var key = FIELD_KEYS[i];
+    var hay = idx ? idx.cho[key] : toCho(m[key]);
+    if (hay && hay.indexOf(q) >= 0 && FIELD_W[key] > bestW) { bestW = FIELD_W[key]; best = key; }
+  }
+  return best;                              /* null 이면 못 걸림 */
 }
 
 /* 점수 — 통과/탈락을 정하지 않는다. 순서를 정할 뿐이다. */
@@ -806,15 +908,20 @@ function scoreOf(m, toks) {
 
   var total = 0, where = [];
   for (var i = 0; i < toks.length; i++) {
-    var t = toks[i], best = 0, bestF = null;
+    var alts = expand(toks[i]);                            /* 한글↔영문까지 함께 본다 (14B) */
+    var best = 0, bestF = null;
     for (var j = 0; j < FIELD_KEYS.length; j++) {
       var key = FIELD_KEYS[j], hay = f[key];
       if (!hay) continue;
-      var s = 0;
-      if (hay === t) s = FIELD_W[key] * 6;                 /* 칸 전체가 똑같다 */
-      else if (hay.indexOf(t) === 0) s = FIELD_W[key] * 3; /* 앞부분이 같다 */
-      else if (hay.indexOf(t) >= 0) s = FIELD_W[key];      /* 안에 들어 있다 */
-      if (s > best) { best = s; bestF = key; }
+      for (var a = 0; a < alts.length; a++) {
+        var t = alts[a], s = 0;
+        if (hay === t) s = FIELD_W[key] * 6;                 /* 칸 전체가 똑같다 */
+        else if (hay.indexOf(t) === 0) s = FIELD_W[key] * 3; /* 앞부분이 같다 */
+        else if (hay.indexOf(t) >= 0) s = FIELD_W[key];      /* 안에 들어 있다 */
+        /* ★ 한글로 쳐서 걸린 것은 영문으로 정확히 친 것보다 살짝 아래에 둔다 */
+        if (a > 0) s = s * 0.9;
+        if (s > best) { best = s; bestF = key; }
+      }
     }
     total += best;
     if (bestF && where.indexOf(bestF) < 0) where.push(bestF);
@@ -829,13 +936,24 @@ function scoreOf(m, toks) {
    ★ 띄어쓰기가 여러 개든, 앞뒤에 공백이 있든 상관없다 — split(/\s+/) + filter
    ★ 검색어가 하나도 없으면(빈칸·공백만) 전부 통과 = 전체 목록 */
 function match(m, query) {
+  var raw = String(query).replace(/\s+/g, "");
+  if (isChoQuery(raw)) return !!choHit(m, raw);    /* 전부 초성이면 초성으로 (14B) */
+
   var toks = String(query).split(/\s+/).map(norm).filter(Boolean);
   if (!toks.length) return true;
   /* ★ 미리 만들어 둔 색인이 있으면 그것을 쓴다.
      없으면 예전처럼 그 자리에서 만든다 — 결과는 어느 쪽이든 같다. */
   var idx = searchIdx[m.id];
   var hay = (idx && idx.hay) ? idx.hay : haystack(m);
-  for (var i = 0; i < toks.length; i++) if (hay.indexOf(toks[i]) < 0) return false;
+
+  for (var i = 0; i < toks.length; i++) {
+    /* 낱말 그대로 없으면 한글↔영문으로 바꾼 것도 본다 — 찾는 범위가 넓어지기만 한다 */
+    var alts = expand(toks[i]), found = false;
+    for (var a = 0; a < alts.length; a++) {
+      if (hay.indexOf(alts[a]) >= 0) { found = true; break; }
+    }
+    if (!found) return false;
+  }
   return true;
 }
 
@@ -898,10 +1016,30 @@ function render() {
 
   /* ★ 걸리는 자재를 고르는 일은 예전 그대로(match).
      달라진 것은 '고른 다음의 순서' 뿐이다. */
-  var rows, hitWhere = {};
-  if (q) {
+  var rows, hitWhere = {}, note = "";
+  if (q && isChoQuery(q.replace(/\s+/g, ""))) {
+    /* ---- 초성 검색 (STEP 14B) ---- */
+    var cq = q.replace(/\s+/g, "");
+    rows = [];
+    var cs = {};
+    for (var ci = 0; ci < cache.length; ci++) {
+      var hitF = choHit(cache[ci], cq);
+      if (!hitF) continue;
+      rows.push(cache[ci]);
+      cs[cache[ci].id] = FIELD_W[hitF];
+      hitWhere[cache[ci].id] = [hitF];
+    }
+    rows.sort(function (a, b) {
+      var d = (cs[b.id] || 0) - (cs[a.id] || 0);
+      if (d !== 0) return d;
+      return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+    });
+    note = "초성으로 찾았습니다";
+  } else if (q) {
     rows = cache.filter(function (m) { return match(m, q); });
     var toks = String(q).split(/\s+/).map(norm).filter(Boolean);
+    var ex = expandedNote(toks);
+    if (ex.length && rows.length) note = ex.join(" · ") + " 로도 함께 찾았습니다";
     if (toks.length && rows.length > 1) {
       var sc = {};
       for (var s = 0; s < rows.length; s++) {
@@ -924,6 +1062,10 @@ function render() {
   $("listCount").textContent = q
     ? rows.length + "건"
     : (cache.length ? "전체 " + cache.length + "건" : "");
+
+  var nb = $("srchNote");
+  if (note && rows.length) { nb.textContent = note; nb.hidden = false; }
+  else { nb.hidden = true; nb.textContent = ""; }
 
   var box = $("list");
   if (!rows.length) {
