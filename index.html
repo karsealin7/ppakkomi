@@ -194,6 +194,12 @@ input:focus,textarea:focus{outline:none;border-color:var(--blue)}
   margin:-2px 2px 10px 2px;padding:7px 11px;border-radius:8px;
   background:#eef7f1;color:#12694a;font-size:13px;font-weight:700;line-height:1.45;
 }
+#btnMore{
+  display:block;width:100%;height:52px;margin:4px 0 10px 0;
+  border:2px dashed var(--line);border-radius:12px;
+  background:#fff;color:var(--dim);font-size:16px;font-weight:700;
+}
+#btnMore:active{background:#f1f4f9}
 #srchNote.rescue{background:#fff6e5;color:#8a5b00}
 .card .hit.near{background:#fff6e5;color:#8a5b00}
 .card .hitrow{margin-top:7px;display:flex;flex-wrap:wrap;gap:5px}
@@ -539,8 +545,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 14C";
-var BUILD       = "2026-09-12c";
+var APP_VERSION = "V0.1 · STEP 15";
+var BUILD       = "2026-09-12d";
 var BACKUP_FORMAT = 1;
 var SCHEMA      = 1;
 
@@ -795,6 +801,20 @@ var FIELD_LABEL = { partNo:"품번", name:"품명", alias:"별명", spec:"규격
                     feature:"특징", use:"용도", place:"보관", story:"스토리" };
 
 var searchIdx = {};                /* { 자재id: {f:{칸별 정규화}, hay:"…", cho:{칸별 초성}} } */
+
+/* ==================================================================
+   화면에 한 번에 그리는 장수 (STEP 15)
+
+   ★ 검색 결과를 줄이는 것이 아니다. **그리는 장수만** 끊는다.
+     건수는 언제나 전체가 그대로 표시되고, 「더 보기」로 나머지를 이어 그린다.
+   ★ 왜 지금 넣어도 안전한가
+     STEP 14A 에서 관련도 순으로 줄을 세워 두었기 때문에
+     맨 앞 50장이 가장 잘 맞는 것들이다.
+     (정렬이 없던 시절이었다면 위험한 변경이었을 것이다)
+   ================================================================== */
+var RENDER_STEP = 50;
+var shownLimit  = RENDER_STEP;
+var shownFor    = null;            /* 이 검색어에 대한 제한인가 */
 
 /* ==================================================================
    한글로 쓴 영문 (STEP 14B)
@@ -1220,6 +1240,11 @@ function render() {
     nb.hidden = false;
   } else { nb.hidden = true; nb.textContent = ""; nb.className = ""; }
 
+  /* 검색어가 바뀌면 다시 50장부터. 「더 보기」로 온 것이면 그대로 이어 간다 (STEP 15) */
+  if (q !== shownFor) { shownFor = q; shownLimit = RENDER_STEP; }
+  var draw = q ? rows.slice(0, shownLimit) : rows;
+  var rest = q ? (rows.length - draw.length) : 0;
+
   var box = $("list");
   if (!rows.length) {
     box.innerHTML = '<div class="empty">' +
@@ -1230,8 +1255,8 @@ function render() {
   }
 
   var html = "";
-  for (var i = 0; i < rows.length; i++) {
-    var m = rows[i];
+  for (var i = 0; i < draw.length; i++) {
+    var m = draw[i];
     html += '<div class="card">';
     html += '<div class="nm">' + esc(m.name) + "</div>";
     if (m.partNo) html += '<div><span class="pn">' + esc(m.partNo) + "</span></div>";
@@ -1269,7 +1294,19 @@ function render() {
     html += '<button type="button" class="editbtn" data-id="' + esc(m.id) + '">수정</button></div>';
     html += "</div>";
   }
+  if (rest > 0) {
+    html += '<button type="button" id="btnMore">더 보기 (남은 ' + rest + "건)</button>";
+  }
+
   box.innerHTML = html;
+
+  var more = $("btnMore");
+  if (more) {
+    more.addEventListener("click", function () {
+      shownLimit += RENDER_STEP;        /* 검색어는 그대로 — 이어서 더 그린다 */
+      render();
+    });
+  }
 
   var btns = box.querySelectorAll(".editbtn");
   for (var j = 0; j < btns.length; j++) {
