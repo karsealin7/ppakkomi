@@ -202,6 +202,7 @@ input:focus,textarea:focus{outline:none;border-color:var(--blue)}
 #btnMore:active{background:#f1f4f9}
 #srchNote.rescue{background:#fff6e5;color:#8a5b00}
 .card .hit.near{background:#fff6e5;color:#8a5b00}
+.card .hit.hist{background:#eef7f1;color:#12694a}
 .card .hitrow{margin-top:7px;display:flex;flex-wrap:wrap;gap:5px}
 .card .hit{
   display:inline-block;padding:2px 8px;border-radius:5px;
@@ -545,8 +546,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 15";
-var BUILD       = "2026-09-12d";
+var APP_VERSION = "V0.1 · STEP 16A";
+var BUILD       = "2026-09-12e";
 var BACKUP_FORMAT = 1;
 var SCHEMA      = 1;
 
@@ -798,7 +799,35 @@ var FIELD_W = {                    /* 어느 칸에서 맞았나 — 무게 */
 };
 var FIELD_KEYS  = ["partNo", "name", "alias", "spec", "brand", "feature", "use", "place", "story"];
 var FIELD_LABEL = { partNo:"품번", name:"품명", alias:"별명", spec:"규격", brand:"브랜드",
-                    feature:"특징", use:"용도", place:"보관", story:"스토리" };
+                    feature:"특징", use:"용도", place:"보관", story:"스토리",
+                    hist:"🕒 과거기록" };
+
+/* ==================================================================
+   히스토리 검색 (STEP 16A)
+
+   ★ 무엇을 새로 읽지 않는가
+     reload() 는 예전부터 히스토리 전건을 읽고 있었다 — 자재별 건수를 세려고.
+     세고 나서 버리던 그 글자를 여기서 주워 담을 뿐이다. 읽는 비용이 늘지 않는다.
+
+   ★ 결과가 사라질 수 없는 구조
+     낱말이 자재 9칸에 있으면 예전 그대로 걸린다.
+     거기에 없을 때만 히스토리를 더 본다 — 넓어지기만 한다.
+
+   ★ 점수는 낮다 (12)
+     자재스토리(15)보다 아래. 품번 완전일치(600)가 밀릴 조합이 존재하지 않는다.
+   ================================================================== */
+var HIST_W   = 12;
+var histIdx  = {};      /* { 자재id: "제목|내용|제목|내용…" (정규화됨) } */
+
+/* 히스토리 한 건을 색인 글자로 */
+function histText(h) { return norm(h.title) + "|" + norm(h.content); }
+
+/* 한 건을 색인에 더한다 (새로 적었을 때) */
+function histIndexAdd(h) {
+  if (!h || !h.materialId) return;
+  var t = histText(h);
+  histIdx[h.materialId] = histIdx[h.materialId] ? (histIdx[h.materialId] + "|" + t) : t;
+}
 
 var searchIdx = {};                /* { 자재id: {f:{칸별 정규화}, hay:"…", cho:{칸별 초성}} } */
 
@@ -1073,6 +1102,16 @@ function scoreOf(m, toks) {
         if (s > best) { best = s; bestF = key; }
       }
     }
+    /* 과거기록에서 걸린 경우 — 낮은 점수. 자재 칸에서 이미 걸렸으면 그쪽이 이긴다. (16A) */
+    var hi = histIdx[m.id];
+    if (hi) {
+      for (var b = 0; b < alts.length; b++) {
+        if (hi.indexOf(alts[b]) < 0) continue;
+        var hs2 = HIST_W * (b > 0 ? 0.9 : 1);
+        if (hs2 > best) { best = hs2; bestF = "hist"; }
+      }
+    }
+
     total += best;
     if (bestF && where.indexOf(bestF) < 0) where.push(bestF);
   }
@@ -1096,11 +1135,19 @@ function match(m, query) {
   var idx = searchIdx[m.id];
   var hay = (idx && idx.hay) ? idx.hay : haystack(m);
 
+  var hi = histIdx[m.id];               /* 이 자재의 과거기록 (STEP 16A) */
+
   for (var i = 0; i < toks.length; i++) {
     /* 낱말 그대로 없으면 한글↔영문으로 바꾼 것도 본다 — 찾는 범위가 넓어지기만 한다 */
     var alts = expand(toks[i]), found = false;
     for (var a = 0; a < alts.length; a++) {
       if (hay.indexOf(alts[a]) >= 0) { found = true; break; }
+    }
+    /* ★ 자재 칸에 없을 때만 과거기록을 본다. 있던 것이 사라지는 경로가 아니다. */
+    if (!found && hi) {
+      for (var b = 0; b < alts.length; b++) {
+        if (hi.indexOf(alts[b]) >= 0) { found = true; break; }
+      }
     }
     if (!found) return false;
   }
@@ -1267,7 +1314,8 @@ function render() {
       for (var wi = 0; wi < w.length && wi < 3; wi++) {
         var rw = rescuedWhere[m.id];
         var isR = rw && rw.indexOf(w[wi]) >= 0;
-        html += '<span class="hit' + (isR ? " near" : "") + '">' +
+        var cls = isR ? " near" : (w[wi] === "hist" ? " hist" : "");
+        html += '<span class="hit' + cls + '">' +
                 (isR ? "≈ " : "") + (FIELD_LABEL[w[wi]] || w[wi]) + "</span>";
       }
       html += "</div>";
@@ -1330,11 +1378,13 @@ function reload() {
   /* 히스토리 건수를 먼저 세어 둔다 (카드에 표시하려고) */
   return STORE.all("history").then(function (hs) {
     histCount = {};
+    histIdx = {};                       /* ★ 세는 김에 검색 색인도 만든다 (STEP 16A) */
     for (var i = 0; i < hs.length; i++) {
       var k = hs[i].materialId;
       histCount[k] = (histCount[k] || 0) + 1;
+      histIndexAdd(hs[i]);
     }
-  }).catch(function () { histCount = {}; }).then(function () {
+  }).catch(function () { histCount = {}; histIdx = {}; }).then(function () {
     /* 사진은 '있다/없다'만 본다 — 목록을 그릴 때 사진 알맹이를 끌어올리지 않는다 */
     return STORE.keys("photos").then(function (ks) {
       photoHas = {};
@@ -1489,6 +1539,7 @@ function histSave() {
     return renderHist(editingId);
   }).then(function () {
     histCount[h.materialId] = (histCount[h.materialId] || 0) + 1;
+    histIndexAdd(h);          /* ★ 방금 적은 기록이 '바로' 검색되게 (STEP 16A) */
     render();
     toast("기록했습니다 — " + h.date);
   }).catch(function (e) {
