@@ -203,6 +203,13 @@ input:focus,textarea:focus{outline:none;border-color:var(--blue)}
 #srchNote.rescue{background:#fff6e5;color:#8a5b00}
 .card .hit.near{background:#fff6e5;color:#8a5b00}
 .card .hit.hist{background:#eef7f1;color:#12694a}
+.card .snip{
+  margin-top:7px;padding:7px 10px;border-radius:8px;
+  background:#f4f9f6;border-left:3px solid #12694a;
+  font-size:13.5px;color:#3a4048;line-height:1.45;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.card .snip .d{color:#12694a;font-weight:700}
 .card .hitrow{margin-top:7px;display:flex;flex-wrap:wrap;gap:5px}
 .card .hit{
   display:inline-block;padding:2px 8px;border-radius:5px;
@@ -546,8 +553,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 16A";
-var BUILD       = "2026-09-12e";
+var APP_VERSION = "V0.1 · STEP 16B";
+var BUILD       = "2026-09-12f";
 var BACKUP_FORMAT = 1;
 var SCHEMA      = 1;
 
@@ -817,7 +824,10 @@ var FIELD_LABEL = { partNo:"품번", name:"품명", alias:"별명", spec:"규격
      자재스토리(15)보다 아래. 품번 완전일치(600)가 밀릴 조합이 존재하지 않는다.
    ================================================================== */
 var HIST_W   = 12;
-var histIdx  = {};      /* { 자재id: "제목|내용|제목|내용…" (정규화됨) } */
+var histIdx  = {};      /* { 자재id: "제목|내용|제목|내용…" (정규화됨) } — 걸리는지 빠르게 보는 용도 */
+var histRec  = {};      /* { 자재id: [{date,title,content}] } — 어느 기록이 맞았는지 보여주는 용도 (16B) */
+var SNIP_KEEP = 160;    /* 한 건에서 붙들어 두는 내용 길이 (메모리 상한) */
+var SNIP_LEN  = 46;     /* 화면에 보이는 글자 수 상한 */
 
 /* 히스토리 한 건을 색인 글자로 */
 function histText(h) { return norm(h.title) + "|" + norm(h.content); }
@@ -827,6 +837,55 @@ function histIndexAdd(h) {
   if (!h || !h.materialId) return;
   var t = histText(h);
   histIdx[h.materialId] = histIdx[h.materialId] ? (histIdx[h.materialId] + "|" + t) : t;
+
+  /* 원문도 짧게 붙들어 둔다 — 스니펫에 쓸 것 (16B) */
+  if (!histRec[h.materialId]) histRec[h.materialId] = [];
+  histRec[h.materialId].push({
+    date: String(h.date || ""),
+    title: String(h.title || ""),
+    content: String(h.content || "").slice(0, SNIP_KEEP),
+    createdAt: String(h.createdAt || "")
+  });
+}
+
+/* ==================================================================
+   맞은 기록 한 줄 고르기 (STEP 16B)
+
+   ★ 최신 기록을 보여주는 것이 아니다. **이번 검색에 실제로 걸린** 기록을 보여준다.
+   ★ 고르는 기준 두 가지뿐 — 헷갈릴 일이 없게
+       ① 검색어 낱말이 더 많이 들어 있는 기록
+       ② 같으면 최신 기록 (날짜 → 적은 시각)
+   ★ 화면에 그려지는 카드(최대 50장)에서만 계산한다.
+     전체 자재를 훑지 않으므로 자재가 늘어도 비용이 늘지 않는다.
+   ================================================================== */
+function pickSnippet(materialId, toks) {
+  var rows = histRec[materialId];
+  if (!rows || !rows.length || !toks || !toks.length) return null;
+
+  var best = null, bestHits = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var hay = norm(r.title) + "|" + norm(r.content);
+    var hits = 0;
+    for (var j = 0; j < toks.length; j++) {
+      var alts = expand(toks[j]);
+      for (var a = 0; a < alts.length; a++) {
+        if (hay.indexOf(alts[a]) >= 0) { hits++; break; }
+      }
+    }
+    if (hits === 0) continue;
+    if (hits > bestHits) { best = r; bestHits = hits; continue; }
+    if (hits === bestHits && best && histSort(best, r) > 0) best = r;   /* 동률이면 최신 */
+  }
+  return best;
+}
+
+/* 날짜 · 제목 · 내용 을 한 줄로 (길면 말줄임) */
+function snippetLine(r) {
+  var body = r.title || "";
+  if (r.content) body += (body ? " · " : "") + r.content.replace(/\s+/g, " ");
+  if (body.length > SNIP_LEN) body = body.slice(0, SNIP_LEN) + "…";
+  return { date: r.date, body: body };
 }
 
 var searchIdx = {};                /* { 자재id: {f:{칸별 정규화}, hay:"…", cho:{칸별 초성}} } */
@@ -1214,6 +1273,7 @@ function render() {
   /* ★ 걸리는 자재를 고르는 일은 예전 그대로(match).
      달라진 것은 '고른 다음의 순서' 뿐이다. */
   var rows, hitWhere = {}, note = "", isRescue = false, rescuedWhere = {};
+  var qToks = q ? String(q).split(/\s+/).map(norm).filter(Boolean) : [];
   if (q && isChoQuery(q.replace(/\s+/g, ""))) {
     /* ---- 초성 검색 (STEP 14B) ---- */
     var cq = q.replace(/\s+/g, "");
@@ -1320,6 +1380,16 @@ function render() {
       }
       html += "</div>";
     }
+    /* 과거기록이 이번 검색에 실제로 기여했을 때만 한 줄 보여준다 (STEP 16B) */
+    if (w && w.indexOf("hist") >= 0) {
+      var sn = pickSnippet(m.id, qToks);
+      if (sn) {
+        /* ★ 이름을 snLine 으로 둔다 — 아래 line() 도우미와 겹치면 카드가 통째로 깨진다 */
+        var snLine = snippetLine(sn);
+        html += '<div class="snip"><span class="d">🕒 ' + esc(snLine.date) + "</span> " +
+                esc(snLine.body) + "</div>";
+      }
+    }
     html += "<dl>";
     html += line("규격", m.spec);
     html += line("브랜드", m.brand);
@@ -1379,12 +1449,13 @@ function reload() {
   return STORE.all("history").then(function (hs) {
     histCount = {};
     histIdx = {};                       /* ★ 세는 김에 검색 색인도 만든다 (STEP 16A) */
+    histRec = {};                       /* 스니펫에 쓸 원문 (STEP 16B) */
     for (var i = 0; i < hs.length; i++) {
       var k = hs[i].materialId;
       histCount[k] = (histCount[k] || 0) + 1;
       histIndexAdd(hs[i]);
     }
-  }).catch(function () { histCount = {}; histIdx = {}; }).then(function () {
+  }).catch(function () { histCount = {}; histIdx = {}; histRec = {}; }).then(function () {
     /* 사진은 '있다/없다'만 본다 — 목록을 그릴 때 사진 알맹이를 끌어올리지 않는다 */
     return STORE.keys("photos").then(function (ks) {
       photoHas = {};
