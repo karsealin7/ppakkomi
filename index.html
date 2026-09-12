@@ -194,6 +194,8 @@ input:focus,textarea:focus{outline:none;border-color:var(--blue)}
   margin:-2px 2px 10px 2px;padding:7px 11px;border-radius:8px;
   background:#eef7f1;color:#12694a;font-size:13px;font-weight:700;line-height:1.45;
 }
+#srchNote.rescue{background:#fff6e5;color:#8a5b00}
+.card .hit.near{background:#fff6e5;color:#8a5b00}
 .card .hitrow{margin-top:7px;display:flex;flex-wrap:wrap;gap:5px}
 .card .hit{
   display:inline-block;padding:2px 8px;border-radius:5px;
@@ -537,8 +539,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 14B";
-var BUILD       = "2026-09-12b";
+var APP_VERSION = "V0.1 · STEP 14C";
+var BUILD       = "2026-09-12c";
 var BACKUP_FORMAT = 1;
 var SCHEMA      = 1;
 
@@ -876,16 +878,144 @@ function toCho(s) {
 
 function isChoQuery(q) { return /^[ㄱ-ㅎ]{2,}$/.test(String(q).replace(/\s+/g, "")); }
 
+/* ==================================================================
+   오타 구제 (STEP 14C) — 뒤에서만 출동하는 안전망
+
+   ★ 왜 필요한가
+     "프록시" 라고 쳤는데 0건이면 사람은 「빠꼬미에 없네」 로 읽는다.
+     그리고 같은 자재를 다시 등록한다 — 그러면 기억이 둘로 갈라진다.
+     이 프로젝트가 가장 경계해 온 사고다.
+
+   ★ 언제만 움직이는가
+     ① 정상 검색이 **0건일 때만**
+     ② 세 글자 이상인 낱말에만
+     ③ 한 글자 차이까지만
+     정상 결과가 한 건이라도 있으면 **절대 끼어들지 않는다.**
+   ================================================================== */
+var RESCUE_MIN_LEN = 3;      /* 이보다 짧은 낱말은 구제하지 않는다 */
+
+/* ★ 낱자(ㄱ~ㅎ, ㅏ~ㅣ)가 섞인 검색어는 구제하지 않는다.
+   "ㄱ센서" 는 초성을 치다 만 것이지 오타가 아니다.
+   그런 것을 "센서" 로 이어 주면, 사람이 무엇을 친 것인지 빠꼬미가 멋대로 정하게 된다. */
+function hasJamo(s) { return /[ㄱ-ㅣ]/.test(String(s)); }
+
+/* 한 글자 차이인가 (끼움·빠짐·바뀜 한 번까지) */
+function near(a, b) {
+  if (a === b) return true;
+  var la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  var i = 0, j = 0, edits = 0;
+  while (i < la && j < lb) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (la > lb) i++;
+    else if (la < lb) j++;
+    else { i++; j++; }
+  }
+  return edits + (la - i) + (lb - j) <= 1;
+}
+
+/* 낱말 하나가 이 칸의 어떤 '단어' 와 한 글자 차이인가 */
+function nearInField(words, t) {
+  if (!words) return false;
+  for (var i = 0; i < words.length; i++) {
+    if (words[i].length >= RESCUE_MIN_LEN - 1 && near(words[i], t)) return true;
+  }
+  return false;
+}
+
+/*
+  구제 검색 — 정상 검색이 0건일 때만 불린다.
+  돌려주는 것: [{m, total, where, rescued:[칸…]}] (점수 높은 순)
+*/
+function rescueSearch(toks) {
+  var out = [];
+
+  for (var c = 0; c < cache.length; c++) {
+    var m = cache[c], idx = searchIdx[m.id];
+    if (!idx) continue;
+
+    var total = 0, where = [], rescued = [], okAll = true, usedRescue = false;
+
+    for (var i = 0; i < toks.length; i++) {
+      var alts = expand(toks[i]);
+      var fuzzyAlt = [];                          /* 같은 자리: 이 대안이 '오타로 넓힌 것' 인가 */
+      for (var fa = 0; fa < alts.length; fa++) fuzzyAlt.push(false);
+
+      /* ★ 브랜드 이름을 한 글자 틀리게 친 경우도 구제한다 ("오므롬" → OMRON).
+         자재에는 영문으로 적혀 있어 단어끼리 비교하는 것만으로는 닿지 못한다. */
+      if (toks[i].length >= RESCUE_MIN_LEN) {
+        for (var bs = 0; bs < BRAND_SYN.length; bs++) {
+          var ko = BRAND_SYN[bs][0], en = BRAND_SYN[bs][1];
+          if (near(toks[i], ko) && alts.indexOf(en) < 0) { alts.push(en); fuzzyAlt.push(true); }
+          if (near(toks[i], en) && alts.indexOf(ko) < 0) { alts.push(ko); fuzzyAlt.push(true); }
+        }
+      }
+
+      var best = 0, bestF = null, bestWasRescue = false;
+
+      for (var j = 0; j < FIELD_KEYS.length; j++) {
+        var key = FIELD_KEYS[j], hay = idx.f[key];
+        if (!hay) continue;
+
+        for (var a = 0; a < alts.length; a++) {
+          var t = alts[a], s = 0, isR = fuzzyAlt[a];
+
+          if (hay.indexOf(t) >= 0) {
+            /* 이 낱말은 (또는 바꿔 본 낱말은) 그대로 들어 있다 */
+            s = (hay === t) ? FIELD_W[key] * 6
+              : (hay.indexOf(t) === 0 ? FIELD_W[key] * 3 : FIELD_W[key]);
+            if (isR) s = s * 0.4;                 /* 오타로 넓혀 닿은 것은 크게 낮춘다 */
+          } else if (t.length >= RESCUE_MIN_LEN && nearInField(idx.w[key], t)) {
+            /* ★ 한 글자 차이로 걸렸다 */
+            s = FIELD_W[key] * 0.4;
+            isR = true;
+          } else {
+            continue;
+          }
+          if (a > 0 && !fuzzyAlt[a]) s = s * 0.9; /* 한글↔영문으로 걸린 것 (14B 규칙 유지) */
+          if (s > best) { best = s; bestF = key; bestWasRescue = isR; }
+        }
+      }
+
+      if (!best) { okAll = false; break; }        /* 이 낱말은 어떻게 해도 못 찾았다 */
+      total += best;
+      if (bestF && where.indexOf(bestF) < 0) where.push(bestF);
+      if (bestWasRescue) {
+        usedRescue = true;
+        if (bestF && rescued.indexOf(bestF) < 0) rescued.push(bestF);
+      }
+    }
+
+    /* ★ 구제로 걸린 낱말이 하나라도 있어야 구제 결과다.
+       전부 정상으로 걸렸다면 애초에 정상 검색에서 나왔어야 한다. */
+    if (okAll && usedRescue) out.push({ m: m, total: total, where: where, rescued: rescued });
+  }
+
+  out.sort(function (x, y) {
+    var d = y.total - x.total;
+    if (d !== 0) return d;
+    return String(y.m.updatedAt || "").localeCompare(String(x.m.updatedAt || ""));
+  });
+  return out;
+}
+
 function buildIndex(rows) {
   searchIdx = {};
   for (var i = 0; i < rows.length; i++) {
-    var m = rows[i], f = {}, cho = {};
+    var m = rows[i], f = {}, cho = {}, w = {};
     for (var k = 0; k < FIELD_KEYS.length; k++) {
       var key = FIELD_KEYS[k];
       f[key] = norm(m[key]);
       cho[key] = toCho(m[key]);            /* 초성 색인도 여기서 한 번만 (STEP 14B) */
+      /* 단어 단위 색인 — 오타 구제가 비교할 알맹이 (STEP 14C)
+         "프록스, PROX" → ["프록스","prox"] 처럼 사람이 쓴 단어 그대로 쪼갠다 */
+      w[key] = String(m[key] == null ? "" : m[key])
+        .split(/[\s,·/|()\[\]]+/)
+        .map(norm)
+        .filter(function (x) { return x.length > 1; });
     }
-    searchIdx[m.id] = { f: f, hay: haystack(m), cho: cho };
+    searchIdx[m.id] = { f: f, hay: haystack(m), cho: cho, w: w };
   }
 }
 
@@ -1016,7 +1146,7 @@ function render() {
 
   /* ★ 걸리는 자재를 고르는 일은 예전 그대로(match).
      달라진 것은 '고른 다음의 순서' 뿐이다. */
-  var rows, hitWhere = {}, note = "";
+  var rows, hitWhere = {}, note = "", isRescue = false, rescuedWhere = {};
   if (q && isChoQuery(q.replace(/\s+/g, ""))) {
     /* ---- 초성 검색 (STEP 14B) ---- */
     var cq = q.replace(/\s+/g, "");
@@ -1055,17 +1185,40 @@ function render() {
     } else if (toks.length) {
       for (var o = 0; o < rows.length; o++) hitWhere[rows[o].id] = scoreOf(rows[o], toks).where;
     }
+
+    /* ---- 오타 구제 (STEP 14C) ----
+       ★ 정상 검색이 0건일 때만. 한 건이라도 있으면 여기 들어오지 않는다. */
+    if (rows.length === 0 && toks.length && !hasJamo(q)) {
+      var long = false;
+      for (var lt = 0; lt < toks.length; lt++) if (toks[lt].length >= RESCUE_MIN_LEN) long = true;
+      if (long) {
+        var res = rescueSearch(toks);
+        if (res.length) {
+          rows = [];
+          for (var ri = 0; ri < res.length; ri++) {
+            rows.push(res[ri].m);
+            hitWhere[res[ri].m.id] = res[ri].where;
+            rescuedWhere[res[ri].m.id] = res[ri].rescued;
+          }
+          isRescue = true;
+          note = "「" + q + "」로는 없어서 비슷한 말로 찾았습니다";
+        }
+      }
+    }
   } else {
     rows = cache.slice(0, 20);
   }
-  $("listTitle").textContent = q ? "검색 결과" : "최근 등록한 자재";
+  $("listTitle").textContent = q ? (isRescue ? "비슷한 말로 찾은 결과" : "검색 결과") : "최근 등록한 자재";
   $("listCount").textContent = q
     ? rows.length + "건"
     : (cache.length ? "전체 " + cache.length + "건" : "");
 
   var nb = $("srchNote");
-  if (note && rows.length) { nb.textContent = note; nb.hidden = false; }
-  else { nb.hidden = true; nb.textContent = ""; }
+  if (note && rows.length) {
+    nb.textContent = note;
+    nb.className = isRescue ? "rescue" : "";   /* 구제 결과는 색이 다르다 */
+    nb.hidden = false;
+  } else { nb.hidden = true; nb.textContent = ""; nb.className = ""; }
 
   var box = $("list");
   if (!rows.length) {
@@ -1087,7 +1240,10 @@ function render() {
     if (w && w.length) {
       html += '<div class="hitrow">';
       for (var wi = 0; wi < w.length && wi < 3; wi++) {
-        html += '<span class="hit">' + (FIELD_LABEL[w[wi]] || w[wi]) + "</span>";
+        var rw = rescuedWhere[m.id];
+        var isR = rw && rw.indexOf(w[wi]) >= 0;
+        html += '<span class="hit' + (isR ? " near" : "") + '">' +
+                (isR ? "≈ " : "") + (FIELD_LABEL[w[wi]] || w[wi]) + "</span>";
       }
       html += "</div>";
     }
