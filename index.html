@@ -553,8 +553,8 @@ footer{text-align:center;color:var(--dim);font-size:12.5px;padding:18px 10px 6px
 /* ==================================================================
    빠꼬미 Mobile-First V0.1
    ================================================================== */
-var APP_VERSION = "V0.1 · STEP 16B";
-var BUILD       = "2026-09-12f";
+var APP_VERSION = "V0.1 · STEP 16C";
+var BUILD       = "2026-09-13a";
 var BACKUP_FORMAT = 1;
 var SCHEMA      = 1;
 
@@ -717,12 +717,71 @@ var STORE = (function () {
         }
         var t = db.transaction(["materials", "history"], "readwrite");
         var ms = t.objectStore("materials"), hs = t.objectStore("history");
-        ms.clear(); hs.clear();
-        for (var i = 0; i < materials.length; i++) ms.put(materials[i]);
-        for (var j = 0; j < history.length; j++) hs.put(history[j]);
         t.oncomplete = function () { resolve({ m: materials.length, h: history.length }); };
         t.onerror = function () { reject(t.error); };
         t.onabort = function () { reject(t.error || new Error("복구가 취소되었습니다. 기존 데이터는 그대로입니다.")); };
+
+        /* ★ CRIT-1 (V1 안정화) — 반드시 try 로 감싸고, 어긋나면 손수 abort 한다.
+           자바스크립트 예외는 Promise 만 reject 시킬 뿐 IndexedDB 를 되돌리지 않는다.
+           감싸지 않으면 이미 예약된 clear() 와 앞부분 put() 이 **그대로 커밋**되어
+           「복구는 실패했는데 기존 자재·히스토리는 이미 사라진」 상태가 된다.
+           abort() 를 부르면 이 트랜잭션에서 예약한 모든 것이 통째로 되돌아간다. */
+        try {
+          ms.clear(); hs.clear();
+          for (var i = 0; i < materials.length; i++) ms.put(materials[i]);
+          for (var j = 0; j < history.length; j++) hs.put(history[j]);
+        } catch (err) {
+          try { t.abort(); } catch (e2) { /* 이미 끝난 트랜잭션이면 abort 도 던진다 */ }
+          reject(err);
+          return;
+        }
+      });
+    },
+
+    /* ★ CRIT-2 (V1 안정화) — 자재 하나를 '통째로' 지운다.
+         자재 + 그 자재의 히스토리 + 그 자재의 사진.
+
+       ★ 반드시 하나의 트랜잭션 안에서 한다.
+         예전에는 히스토리 → 사진 → 자재 를 따로따로 지웠다. 그러면 마지막 단계가 실패했을 때
+         「히스토리와 사진은 이미 영원히 사라졌는데 자재만 남는」 상태가 확정된다.
+         사람은 "삭제하지 못했습니다" 를 보고 아무 일도 없었다고 믿는다 — 가장 나쁜 실패다.
+         한 트랜잭션 안에 두면 중간에 무엇이 잘못될 때 IndexedDB 가 전부 되돌린다.
+
+       ★ 지우는 범위는 id 하나뿐이다. 다른 자재에는 절대 손대지 않는다. */
+    removeMaterialDeep: function (id) {
+      return new Promise(function (resolve, reject) {
+        if (typeof id !== "string" || !id) { reject(new Error("삭제 대상이 분명하지 않습니다.")); return; }
+
+        var t = db.transaction(["materials", "history", "photos"], "readwrite");
+        var hn = 0;
+        t.oncomplete = function () { resolve({ id: id, history: hn }); };
+        t.onerror = function () { reject(t.error); };
+        t.onabort = function () {
+          reject(t.error || new Error("삭제가 취소되었습니다. 자재·히스토리·사진은 그대로입니다."));
+        };
+
+        function bail(err) {
+          try { t.abort(); } catch (e2) {}
+          reject(err);
+        }
+
+        try {
+          /* 이 자재의 히스토리만 훑어서 지운다 — materialId 로 찾고, 값으로 한 번 더 확인한다 */
+          var cur = t.objectStore("history").index("materialId").openCursor(IDBKeyRange.only(id));
+          cur.onsuccess = function (ev) {
+            try {
+              var c = ev.target.result;
+              if (!c) return;
+              if (c.value && c.value.materialId === id) { c["delete"](); hn++; }
+              c["continue"]();
+            } catch (err2) { bail(err2); }
+          };
+          t.objectStore("photos")["delete"](id);        /* 없으면 조용히 지나간다 */
+          t.objectStore("materials")["delete"](id);
+        } catch (err) {
+          bail(err);
+          return;
+        }
       });
     },
 
@@ -1790,29 +1849,16 @@ function del() {
   if (!ok) return;                      /* 취소 — 아무것도 하지 않는다 */
 
   $("btnDelete").disabled = true;
-  /* ★ 이 자재의 히스토리만 먼저 지운다.
-     materialId 로 찾은 것만, 하나씩 id 로 지운다.
-     다른 자재의 기록에는 손대지 않는다. */
-  STORE.byIndex("history", "materialId", target).then(function (rows) {
-    var chain = Promise.resolve();
-    rows.forEach(function (h) {
-      if (h.materialId !== target) return;          /* 이중 확인 */
-      chain = chain.then(function () { return STORE.remove("history", h.id); });
-    });
-    return chain;
-  }).then(function () {
-    /* 보관해 둔 사진이 있으면 그것도 함께 (이 자재 것만) */
-    if (!photoHas[target]) return null;
-    return STORE.remove("photos", target).catch(function () { return null; });
-  }).then(function () {
-    return STORE.remove("materials", target);
-  }).then(function () {
+  /* ★ CRIT-2 (V1 안정화) — 자재·히스토리·사진을 '한 번에' 지운다.
+     예전처럼 세 번에 나눠 지우지 않는다. 중간에 실패하면 전부 되돌아간다. */
+  STORE.removeMaterialDeep(target).then(function () {
     closeForm();
     return reload();
   }).then(function () {
     toast("삭제했습니다 — " + m.name);
   }).catch(function (e) {
-    alert("삭제하지 못했습니다.\n\n" + (e && e.message ? e.message : e));
+    alert("삭제하지 못했습니다.\n\n" + (e && e.message ? e.message : e) +
+          "\n\n자재 · 히스토리 · 사진 모두 그대로 남아 있습니다.");
   }).then(function () {
     $("btnDelete").disabled = false;
   });
@@ -2193,8 +2239,19 @@ function restoreFile(file) {
         toast("복구가 완료되었습니다 — 자재 " + n.m + "건 · 히스토리 " + n.h + "건", 4200);
       });
     }).catch(function (e) {
-      alert("복구하지 못했습니다.\n\n" + (e && e.message ? e.message : e) +
-            "\n\n기존 데이터는 그대로입니다.");
+      /* ★ CRIT-1 (V1 안정화) — 실패했을 때 「기존 데이터는 그대로입니다」 라고 단정하지 않는다.
+         저장소를 실제로 세어 보고, 지금 몇 건이 있는지 있는 그대로 알려 준다.
+         가능한 척하지 않는다 — 사람이 화면을 믿고 백업을 미루는 일이 없도록. */
+      var head = "복구하지 못했습니다.\n\n" + (e && e.message ? e.message : e);
+      return Promise.all([STORE.count("materials"), STORE.count("history")])
+        .then(function (c) {
+          return "\n\n지금 빠꼬미에는 자재 " + c[0] + "건 · 히스토리 " + c[1] + "건이 있습니다.";
+        })
+        .catch(function () { return ""; })
+        .then(function (tail) {
+          alert(head + tail);
+          return reload().catch(function () {});   /* 화면을 실제 저장소와 다시 맞춘다 */
+        });
     }).then(function () {
       $("btnRestore").disabled = false;
     });
